@@ -1,0 +1,610 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String?
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(ADMIN)
+  accounts      Account[]
+  sessions      Session[]
+
+  // Leagues owned by this user
+  ownedLeagues  League[]
+
+  // Leagues where this user is an admin
+  leagueAdmins  LeagueAdmin[]
+
+  // Saved points system templates
+  pointsTemplates PointsSystemTemplate[]
+
+  // Manual race result bonuses configured during import
+  raceResultBonuses RaceResultBonus[] @relation("RaceResultBonusUpdatedBy")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum Role {
+  ADMIN
+  SUPER_ADMIN
+}
+
+// ============================================================================
+// LEAGUE SYSTEM MODELS
+// ============================================================================
+
+model League {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  logoUrl     String?
+
+  // Owner of the league
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
+
+  // Additional admins
+  admins      LeagueAdmin[]
+
+  // Seasons in this league
+  seasons     Season[]
+
+  // Teams in this league (shared across seasons via assignments)
+  teams       Team[]
+
+  // Legacy: events directly linked (migration path)
+  events      Event[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+model LeagueAdmin {
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  addedAt  DateTime @default(now())
+  addedBy  String?
+
+  @@unique([leagueId, userId])
+  @@index([leagueId])
+  @@index([userId])
+}
+
+model Season {
+  id            String       @id @default(cuid())
+  leagueId      String
+  league        League       @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  name          String       // "2025", "Season 5"
+  year          Int?
+  status        SeasonStatus @default(DRAFT)
+
+  // Points system for this season (JSON)
+  pointsSystem  Json         // { name, positions, bonuses, rules }
+
+  // Sprint rules for this season (JSON)
+  sprintConfig  Json?
+
+  // Races in this season
+  races         Race[]
+
+  // Team assignments for this season
+  teamAssignments SeasonTeamAssignment[]
+
+  // Optional depth chart priority entries (team scoring mode)
+  depthChartEntries SeasonTeamDepthChartEntry[]
+
+  // Optional race-specific rosters for slot-based scoring
+  raceTeamRosters SeasonRaceTeamRoster[]
+
+  // Cached standings
+  standings     Standing[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([leagueId, name])
+  @@index([leagueId])
+  @@index([status])
+}
+
+enum SeasonStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  leagueId    String
+  league      League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  name        String
+  color       String?  // Hex color for UI
+  logoUrl     String?
+
+  // Logo display settings (for manual adjustment)
+  logoScale   Float    @default(1.0)  // Zoom level (0.5 to 2.0)
+  logoPosX    Float    @default(0)    // Horizontal position offset (-50% to 50%)
+  logoPosY    Float    @default(0)    // Vertical position offset (-50% to 50%)
+
+  // Season assignments
+  assignments SeasonTeamAssignment[]
+
+  // Optional depth chart priority entries
+  depthChartEntries SeasonTeamDepthChartEntry[]
+
+  // Optional race-specific rosters for slot-based scoring
+  raceRosters      SeasonRaceTeamRoster[]
+
+  // Standings
+  standings   Standing[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([leagueId, name])
+  @@index([leagueId])
+}
+
+// Links drivers to teams for a specific season
+model SeasonTeamAssignment {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  teamId      String?
+  team        Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  driverId    String
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  joinedAt    DateTime @default(now())
+  leftAt      DateTime? // Null = still active
+
+  // Partial unique index enforced in DB (see migration): only one active (leftAt IS NULL) per (seasonId, driverId)
+  @@index([seasonId])
+  @@index([seasonId, leftAt, driverId])
+  @@index([teamId])
+  @@index([driverId])
+}
+
+model Driver {
+  id          String   @id @default(cuid())
+  uuid        String   @unique // Minecraft Player UUID
+  currentName String?
+
+  // Fields enriched from Frosthex API
+  colorCode     String?  // e.g., "#80C71F"
+  boatType      String?  // e.g., "DARK_OAK"
+  boatMaterial  String?  // e.g., "DARK_OAK_BOAT"
+
+  // Previous Minecraft names (lowercase) — used for name-history search without API calls
+  previousNames String[] @default([])
+
+  // Legacy results
+  results     Result[]
+
+  // New system results
+  roundResults RoundResult[]
+
+  // Season assignments
+  assignments SeasonTeamAssignment[]
+
+  // Optional depth chart priority entries
+  depthChartEntries SeasonTeamDepthChartEntry[]
+
+  // Optional race-specific roster entries
+  raceRosterItems   SeasonRaceTeamRosterItem[]
+
+  // Standings
+  standings   Standing[]
+
+  // Manual bonuses per race
+  raceBonuses RaceResultBonus[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([uuid])
+  @@index([currentName])
+}
+
+model Race {
+  id              String      @id @default(cuid())
+  seasonId        String
+  season          Season      @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  name            String      // "Australian Grand Prix"
+  round           Int         // Championship round number
+
+  // API linkage
+  apiEventId      String?     @unique
+  apiEventCache   Json?       // Cache of full API JSON
+
+  // Rounds (Qualy, Race, Sprint, etc.)
+  eventRounds     EventRound[]
+
+  // Optional race-specific rosters for slot-based scoring
+  teamRosters     SeasonRaceTeamRoster[]
+
+  // Manual bonuses applied to final round results
+  resultBonuses   RaceResultBonus[]
+
+  // Track reference
+  trackApiName    String?
+  scheduledDate   DateTime?
+  reverseGridEnabled Boolean @default(false)
+
+  status          RaceStatus  @default(SCHEDULED)
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([seasonId, round])
+  @@index([seasonId])
+  @@index([seasonId, status])
+  @@index([seasonId, round])
+  @@index([status])
+}
+
+enum RaceStatus {
+  SCHEDULED    // Scheduled, no event linked yet
+  PENDING      // Event linked, awaiting configuration
+  COMPLETED    // All rounds imported
+  CANCELLED    // Cancelled
+}
+
+model EventRound {
+  id              String      @id @default(cuid())
+  raceId          String
+  race            Race        @relation(fields: [raceId], references: [id], onDelete: Cascade)
+
+  // API identification
+  apiRoundName    String      // "R1-Qualy", "R2-Race"
+  apiRoundType    String      // "QUALIFICATION", "RACE", "SPRINT_RACE"
+  origin          RoundOrigin @default(API)
+  manualKind      ManualRoundKind?
+  manualBaseRoundId String?
+  manualBaseRound EventRound? @relation("EventRoundManualBase", fields: [manualBaseRoundId], references: [id], onDelete: SetNull)
+  manualDerivedRounds EventRound[] @relation("EventRoundManualBase")
+  manualCreatedById String?
+  manualCreatedAt DateTime?
+
+  // Explicit special round classification
+  specialType     RoundSpecialType @default(NONE)
+  sprintMode      SprintMode?
+
+  // Which heat to use (usually the last/final heat)
+  targetHeatName  String?     // "R1Q1", "R2R1"
+
+  // Points configuration for THIS round
+  pointsSystem    Json?       // null = no points
+
+  // Whether this round counts for championship standings
+  countsForStandings Boolean @default(true)
+
+  status          RoundStatus @default(PENDING)
+
+  // Results
+  results         RoundResult[]
+
+  importedAt      DateTime?
+
+  @@unique([raceId, apiRoundName])
+  @@index([raceId])
+  @@index([status])
+  @@index([origin])
+}
+
+enum RoundOrigin {
+  API
+  MANUAL
+}
+
+enum ManualRoundKind {
+  FINAL
+}
+
+enum RoundStatus {
+  PENDING
+  CONFIGURED    // Configured, ready to import
+  IMPORTED
+  CANCELLED
+}
+
+enum RoundSpecialType {
+  NONE
+  SPRINT
+}
+
+enum SprintMode {
+  CLASSIFICATION
+  POINTS
+}
+
+model RoundResult {
+  id              String      @id @default(cuid())
+  eventRoundId    String
+  eventRound      EventRound  @relation(fields: [eventRoundId], references: [id], onDelete: Cascade)
+  driverId        String
+  driver          Driver      @relation(fields: [driverId], references: [id])
+
+  // Data from API
+  position        Int
+  manualPositionOverride Int?
+  manualPreviousPosition Int?
+  manualOriginalPosition Int?
+  manualEditedById String?
+  manualEditedAt   DateTime?
+  manualEditReason String?
+  startPosition   Int?
+  finishTimeMs    Int?
+  fastestLap      Boolean     @default(false)
+  pitstops        Int         @default(0)
+
+  // Calculated points
+  points          Int         @default(0)
+  disqualified    Boolean     @default(false)
+
+  // Fastest lap details
+  fastestLapTime  Int?
+
+  createdAt       DateTime    @default(now())
+
+  @@unique([eventRoundId, driverId])
+  @@index([eventRoundId])
+  @@index([eventRoundId, position])
+  @@index([driverId])
+  @@index([position])
+}
+
+model RaceResultBonus {
+  id          String   @id @default(cuid())
+  raceId      String
+  race        Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  driverId    String
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  points      Int
+  reason      String?
+  updatedById String?
+  updatedBy   User?    @relation("RaceResultBonusUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([raceId, driverId])
+  @@index([raceId])
+  @@index([driverId])
+}
+
+model Standing {
+  id              String       @id @default(cuid())
+  seasonId        String
+  season          Season       @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  type            StandingType // DRIVER or TEAM
+
+  // Reference to target
+  driverId        String?
+  driver          Driver?      @relation(fields: [driverId], references: [id])
+  teamId          String?
+  team            Team?        @relation(fields: [teamId], references: [id])
+
+  position        Int
+  totalPoints     Int
+  wins            Int          @default(0)
+  podiums         Int          @default(0)
+
+  // Points per race/round snapshot
+  racePoints      Json         // { "raceId": { "roundName": points, "total": points } }
+
+  // Tie-breakers
+  bestFinishes    Json?        // {"1": 3, "2": 5, "3": 2} for tie-breaking
+
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([seasonId, type, driverId])
+  @@unique([seasonId, type, teamId])
+  @@index([seasonId])
+  @@index([seasonId, type, position])
+  @@index([type])
+}
+
+model SeasonTeamDepthChartEntry {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  driverId    String
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  // Lower number = higher priority (1 is top)
+  priority    Int
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([seasonId, teamId, driverId])
+  @@unique([seasonId, teamId, priority])
+  @@index([seasonId, teamId, priority])
+  @@index([seasonId, driverId])
+}
+
+model SeasonRaceTeamRoster {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  raceId      String
+  race        Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  items       SeasonRaceTeamRosterItem[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([seasonId, raceId, teamId])
+  @@index([seasonId, raceId])
+  @@index([seasonId, teamId])
+}
+
+model SeasonRaceTeamRosterItem {
+  id          String   @id @default(cuid())
+  rosterId    String
+  roster      SeasonRaceTeamRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  driverId    String
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  role        RosterDriverRole
+  priority    Int
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([rosterId, driverId])
+  @@unique([rosterId, role, priority])
+  @@index([rosterId, role, priority])
+  @@index([driverId])
+}
+
+enum RosterDriverRole {
+  MAIN
+  RESERVE
+}
+
+enum StandingType {
+  DRIVER
+  TEAM
+}
+
+// ============================================================================
+// LEGACY MODELS (Migration path - keep for compatibility)
+// ============================================================================
+
+model Track {
+  id        String   @id @default(cuid())
+  apiName   String   @unique // The name used in Frosthex exact API
+  name      String?
+  events    Event[]  // History of events raced on this track
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  apiEventId  String   @unique // e.g. "W4FC-26-R5-Monaco"
+  name        String?
+  leagueId    String
+  league      League   @relation(fields: [leagueId], references: [id])
+  trackId     String?
+  track       Track?   @relation(fields: [trackId], references: [id])
+  status      EventStatus @default(PENDING)
+  results     Result[]
+  date        DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum EventStatus {
+  PENDING
+  IMPORTED
+}
+
+model Result {
+  id            String   @id @default(cuid())
+  eventId       String
+  event         Event    @relation(fields: [eventId], references: [id])
+  driverId      String
+  driver        Driver   @relation(fields: [driverId], references: [id])
+
+  position      Int
+  startPosition Int?
+  timeMs        Int?     // Storing time in milliseconds for precision
+  fastestLap    Boolean  @default(false)
+  pitstops      Int      @default(0)
+
+  points        Int      @default(0) // Calculated based on League pointsSystem
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([eventId, driverId]) // A driver can only have one result per event
+  @@index([eventId])
+  @@index([driverId])
+}
+
+// Saved points system templates for reuse
+model PointsSystemTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  // Owner of the template
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Stored as JSON for flexibility
+  pointsData  Json // Contains positions, bonuses, rules
+
+  // Usage tracking
+  usageCount  Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}

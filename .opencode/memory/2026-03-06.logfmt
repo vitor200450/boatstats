@@ -1,0 +1,10 @@
+ts=2026-03-06T17:19:39.187Z type=decision scope=boat-racing-dashboard content="Identified the issue with SLOT_MULLIGAN not calculating points for race 2: The fillMissingSlotRosters function creates in-memory roster entries with inherited raceIds, but these entries don't have a seasonId set, which may cause them to be filtered out or not matched properly. Additionally, need to verify that all races have their round field populated correctly in the database." issue=slot-mulligan-race-2-points
+ts=2026-03-06T17:58:26.219Z type=decision scope=slot-mulligan-scoring content="Fixed SLOT_MULLIGAN scoring system to only apply mulligans when season is completed, not during active season. This resolves the issue where pilots were losing points during an active multi-race season.
+
+Changes made:
+1. Updated teamScoringStrategies.ts: calculateTeamStatsByMode now accepts seasonCompleted parameter
+2. Updated teamScoringStrategies.ts: calculateSlotMulliganTeamStats only applies mulligans when seasonCompleted === true
+3. Updated importActions.ts: Pass seasonCompleted based on season.status !== \"ACTIVE\" to calculateTeamStatsByMode
+4. Updated importActions.ts: Driver mulligans also now only apply when season is not ACTIVE
+
+This ensures that during an active season, all race results accumulate normally. Mulligan removals only happen when the season is marked as completed." tags=mulligan,scoring,season,slot-roster
