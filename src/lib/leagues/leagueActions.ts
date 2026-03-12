@@ -78,7 +78,7 @@ export async function createLeague(data: CreateLeagueInput) {
               description,
               logoUrl: logoUrl || null,
               ownerId: session.user!.id,
-            } as any,
+            },
           });
 
           // Create first season
