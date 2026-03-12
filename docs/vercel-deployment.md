@@ -25,8 +25,9 @@ Defina no painel da Vercel em **Project Settings -> Environment Variables**.
 
 - `DATABASE_URL` -> URL do PostgreSQL no Railway (producao).
 - `AUTH_SECRET` -> segredo forte (32+ bytes).
-- `AUTH_URL` -> `https://boatstats.vercel.app` (ou dominio final).
+- `AUTH_URL` -> `https://boatstats.app` (dominio canonico).
 - `AUTH_TRUST_HOST` -> `true`.
+- `IMAGE_PROXY_ALLOWED_HOSTS` -> lista de hosts permitidos para o proxy de imagens (ex.: `cdn.discordapp.com,ui-avatars.com`).
 - `AUTH_DISCORD_ID` / `AUTH_DISCORD_SECRET`.
 - `FROSTHEX_API_KEY`.
 - `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`.
@@ -57,7 +58,7 @@ Boa pratica: executar esse comando como etapa de release antes do trafego entrar
 
 No app do Discord, cadastre callback de producao:
 
-- `https://boatstats.vercel.app/api/auth/callback/discord`
+- `https://boatstats.app/api/auth/callback/discord`
 
 Se quiser login em preview, adicione callbacks de preview dedicados e avalie risco.
 

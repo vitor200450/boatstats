@@ -579,6 +579,25 @@ function TeamLogo({
   );
 }
 
+function translateRaceStatus(
+  status: string,
+  locale: "pt-BR" | "en",
+): string {
+  if (status === "COMPLETED") {
+    return t(locale, "public.leagueDetail.statusCompleted");
+  }
+
+  if (status === "PENDING") {
+    return t(locale, "public.leagueDetail.statusPending");
+  }
+
+  if (status === "IN_PROGRESS") {
+    return t(locale, "public.leagueDetail.statusInProgress");
+  }
+
+  return status;
+}
+
 export default async function LeagueStandingsPage({ params, searchParams }: PageProps) {
   const locale = await getRequestLocale();
   const { id: leagueIdentifier } = await params;
@@ -731,7 +750,8 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
         ? [
             {
               id: standing.driver.id,
-              name: standing.driver.currentName || "Unknown",
+              name:
+                standing.driver.currentName || t(locale, "public.leagueDetail.unknownDriver"),
               points: standing.totalPoints,
               position: standing.position,
               imageUrl: `https://mc-heads.net/avatar/${standing.driver.uuid}/32`,
@@ -930,7 +950,6 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
               </div>
             )}
             <div className="min-w-0">
-              <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Leader — Drivers</p>
               <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
                 {t(locale, "public.leagueDetail.leaderDrivers")}
               </p>
@@ -1237,7 +1256,7 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                             }
                             className="uppercase font-mono px-3 py-1"
                           >
-                            {race.status}
+                            {translateRaceStatus(race.status, locale)}
                           </Badge>
                           <span className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-zinc-700/60 text-zinc-500 transition-transform duration-200 group-open:rotate-180">
                             <ChevronDown size={14} />

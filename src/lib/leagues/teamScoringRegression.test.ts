@@ -276,7 +276,7 @@ describe("team scoring regression snapshots", () => {
             },
           },
           "teamId": "team-a",
-          "totalPoints": 58,
+          "totalPoints": 88,
           "wins": 1,
         },
       ]

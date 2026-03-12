@@ -344,7 +344,7 @@ export default async function PublicHomePage() {
                                   <img
                                     src={`https://mc-heads.net/avatar/${standing.driver.uuid}/24`}
                                     alt={
-                                      standing.driver.currentName || "Driver"
+                                      standing.driver.currentName || t(locale, "public.home.unknownDriver")
                                     }
                                     className="w-6 h-6 rounded"
                                   />
@@ -547,7 +547,7 @@ export default async function PublicHomePage() {
                                   </span>
                                   <img
                                     src={`https://mc-heads.net/avatar/${result.driver.uuid}/20`}
-                                    alt={result.driver.currentName || "Driver"}
+                                    alt={result.driver.currentName || t(locale, "public.home.unknownDriver")}
                                     className="w-5 h-5 rounded"
                                   />
                                   <span

@@ -155,7 +155,7 @@ export default async function LeaguesIndexPage() {
                               <>
                                 <img
                                   src={`https://mc-heads.net/avatar/${standing.driver.uuid}/20`}
-                                  alt={standing.driver.currentName || "Driver"}
+                                  alt={standing.driver.currentName || t(locale, "public.leagueDetail.unknownDriver")}
                                   className="w-5 h-5 rounded"
                                 />
                                 <div className="text-sm text-zinc-200 truncate flex-1">

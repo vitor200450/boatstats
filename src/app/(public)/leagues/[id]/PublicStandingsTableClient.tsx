@@ -244,7 +244,7 @@ export function PublicStandingsTableClient({
                         <>
                           <img
                             src={`https://mc-heads.net/avatar/${standing.driver.uuid}/32`}
-                            alt={standing.driver.currentName || "Driver"}
+                            alt={standing.driver.currentName || "Desconhecido"}
                             className="w-8 h-8 rounded-md shrink-0 bg-zinc-800"
                           />
                           <div className="min-w-0">
@@ -252,7 +252,7 @@ export function PublicStandingsTableClient({
                               href={`/driver/${standing.driver.uuid}`}
                               className="block truncate text-white font-medium hover:text-cyan-400 transition-colors"
                             >
-                              {standing.driver.currentName || "Unknown"}
+                              {standing.driver.currentName || "Desconhecido"}
                             </Link>
                             {team && (
                               <div className="flex items-center gap-1.5 mt-0.5">
@@ -266,14 +266,14 @@ export function PublicStandingsTableClient({
                           </div>
                         </>
                       ) : (
-                        <span className="text-zinc-500 italic">Driver removed</span>
+                        <span className="text-zinc-500 italic">Piloto removido</span>
                       )}
                     </div>
                     <span className="text-white font-bold font-mono text-base shrink-0">{standing.totalPoints}</span>
                   </div>
                   <div className="mt-3 flex items-center gap-2">
-                    <Badge>Wins: {standing.wins}</Badge>
-                    <Badge>Podiums: {standing.podiums}</Badge>
+                    <Badge>Vitorias: {standing.wins}</Badge>
+                    <Badge>Podios: {standing.podiums}</Badge>
                     {gap !== null && <Badge className="font-mono">-{gap} pts</Badge>}
                   </div>
                   {rows.length > 0 && (
@@ -301,10 +301,10 @@ export function PublicStandingsTableClient({
             <thead className="text-xs text-zinc-400 bg-zinc-950/40 uppercase font-mono border-b border-zinc-800">
               <tr>
                 <th className="px-6 py-4 font-medium w-16">Pos</th>
-                <th className="px-4 py-4 font-medium">Driver</th>
-                <th className="px-4 py-4 font-medium text-center">Wins</th>
-                <th className="px-4 py-4 font-medium text-center">Podiums</th>
-                <th className="px-6 py-4 font-medium text-right">Points</th>
+                <th className="px-4 py-4 font-medium">Piloto</th>
+                <th className="px-4 py-4 font-medium text-center">Vitorias</th>
+                <th className="px-4 py-4 font-medium text-center">Podios</th>
+                <th className="px-6 py-4 font-medium text-right">Pontos</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/50">
@@ -334,7 +334,7 @@ export function PublicStandingsTableClient({
                             <>
                               <img
                                 src={`https://mc-heads.net/avatar/${standing.driver.uuid}/32`}
-                                alt={standing.driver.currentName || "Driver"}
+                                alt={standing.driver.currentName || "Desconhecido"}
                                 className="w-7 h-7 rounded-md shrink-0 bg-zinc-800"
                               />
                               <div>
@@ -342,7 +342,7 @@ export function PublicStandingsTableClient({
                                   href={`/driver/${standing.driver.uuid}`}
                                   className="text-white font-medium hover:text-cyan-400 transition-colors"
                                 >
-                                  {standing.driver.currentName || "Unknown"}
+                                  {standing.driver.currentName || "Desconhecido"}
                                 </Link>
                                 {gap !== null && (
                                   <span className="text-xs text-zinc-600 font-mono ml-2">-{gap} pts</span>
@@ -374,7 +374,7 @@ export function PublicStandingsTableClient({
                               </div>
                             </>
                           ) : (
-                            <span className="text-zinc-500 italic">Driver removed</span>
+                            <span className="text-zinc-500 italic">Piloto removido</span>
                           )}
                         </div>
                       </td>
@@ -411,7 +411,7 @@ export function PublicStandingsTableClient({
     <>
       <div className="md:hidden divide-y divide-zinc-800/50">
         {teamStandings.length === 0 ? (
-          <div className="px-6 py-12 text-center text-zinc-500">No standings data yet.</div>
+          <div className="px-6 py-12 text-center text-zinc-500">Ainda nao ha classificacao disponivel.</div>
         ) : (
           teamStandings.map((standing, idx) => {
             const gap = idx === 0 ? null : teamStandings[0].totalPoints - standing.totalPoints;
@@ -433,14 +433,14 @@ export function PublicStandingsTableClient({
                         <span className="text-white font-medium truncate">{standing.team.name}</span>
                       </>
                     ) : (
-                      <span className="text-zinc-500 italic">Team removed</span>
+                      <span className="text-zinc-500 italic">Equipe removida</span>
                     )}
                   </div>
                   <span className="text-white font-bold font-mono text-base shrink-0">{standing.totalPoints}</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  <Badge>Wins: {standing.wins}</Badge>
-                  <Badge>Podiums: {standing.podiums}</Badge>
+                  <Badge>Vitorias: {standing.wins}</Badge>
+                  <Badge>Podios: {standing.podiums}</Badge>
                   {gap !== null && <Badge className="font-mono">-{gap} pts</Badge>}
                 </div>
                 {rows.length > 0 && (
@@ -468,17 +468,17 @@ export function PublicStandingsTableClient({
           <thead className="text-xs text-zinc-400 bg-zinc-950/40 uppercase font-mono border-b border-zinc-800">
             <tr>
               <th className="px-6 py-4 font-medium w-16">Pos</th>
-              <th className="px-4 py-4 font-medium">Team</th>
-              <th className="px-4 py-4 font-medium text-center">Wins</th>
-              <th className="px-4 py-4 font-medium text-center">Podiums</th>
-              <th className="px-6 py-4 font-medium text-right">Points</th>
+              <th className="px-4 py-4 font-medium">Equipe</th>
+              <th className="px-4 py-4 font-medium text-center">Vitorias</th>
+              <th className="px-4 py-4 font-medium text-center">Podios</th>
+              <th className="px-6 py-4 font-medium text-right">Pontos</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/50">
             {teamStandings.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-6 py-12 text-center text-zinc-500">
-                  No standings data yet.
+                  Ainda nao ha classificacao disponivel.
                 </td>
               </tr>
             ) : (
@@ -525,7 +525,7 @@ export function PublicStandingsTableClient({
                             </div>
                           </>
                         ) : (
-                          <span className="text-zinc-500 italic">Team removed</span>
+                          <span className="text-zinc-500 italic">Equipe removida</span>
                         )}
                       </div>
                     </td>
@@ -639,7 +639,7 @@ function ProgressionModal({
               >
                 {isPodium && (
                   <div className="mb-2 text-[11px] font-mono uppercase tracking-wide text-zinc-400">
-                    Podium finish
+                    Chegada no podio
                   </div>
                 )}
                 <div className="flex items-center justify-between gap-3">
