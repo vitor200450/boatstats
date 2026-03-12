@@ -8,6 +8,7 @@
 - Banco deve permanecer em PostgreSQL puro para facilitar migracao futura.
 - Backup diario obrigatorio para reduzir risco de perda de dados.
 - Migracao futura provavel: DigitalOcean ou outro PostgreSQL gerenciado.
+- O `DATABASE_URL` atual aponta para banco de testes (Aiden), nao para producao.
 
 ## Assumptions
 
@@ -41,6 +42,13 @@ Motivos:
   - consumo de credito;
   - uso de armazenamento;
   - disponibilidade da instancia.
+
+## Environment Separation
+
+- Local/dev pode continuar usando o banco de testes atual (Aiden).
+- Producao deve usar `DATABASE_URL` separado, configurado apenas no ambiente de deploy (Railway/Vercel).
+- Nunca reutilizar o `DATABASE_URL` de testes no ambiente de producao.
+- Em caso de duvida, validar o host da URL antes de rodar migracao/seed.
 
 ## Data Protection and Recovery
 
