@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { CheckCircle2, Trophy, Users, Flag, ArrowRight } from "lucide-react";
 import { Badge } from "@/components/Badge";
+import type { AppLocale } from "@/i18n/config";
+import { t } from "@/i18n/messages";
 
 type SummaryEntry = {
   id: string;
@@ -15,6 +17,7 @@ type SummaryEntry = {
 };
 
 type SeasonFinalSummaryProps = {
+  locale?: AppLocale;
   driverChampion: SummaryEntry | null;
   teamChampion: SummaryEntry | null;
   topDrivers: SummaryEntry[];
@@ -26,9 +29,11 @@ type SeasonFinalSummaryProps = {
 };
 
 function TopList({
+  locale,
   title,
   entries,
 }: {
+  locale: AppLocale;
   title: string;
   entries: SummaryEntry[];
 }) {
@@ -38,7 +43,7 @@ function TopList({
         {title}
       </h4>
       {entries.length === 0 ? (
-        <p className="text-sm text-zinc-500">Dados insuficientes.</p>
+        <p className="text-sm text-zinc-500">{t(locale, "public.seasonFinalSummary.insufficientData")}</p>
       ) : (
         <div className="space-y-2">
           {entries.map((entry, index) => (
@@ -84,6 +89,7 @@ function TopList({
 }
 
 export function SeasonFinalSummary({
+  locale = "pt-BR",
   driverChampion,
   teamChampion,
   topDrivers,
@@ -101,10 +107,10 @@ export function SeasonFinalSummary({
         </div>
         <div>
           <h3 className="text-lg font-bold text-white font-mono">
-            Temporada Finalizada
+            {t(locale, "public.seasonFinalSummary.title")}
           </h3>
           <p className="text-xs text-blue-300/70">
-            Resumo final do campeonato
+            {t(locale, "public.seasonFinalSummary.subtitle")}
           </p>
         </div>
       </div>
@@ -119,7 +125,7 @@ export function SeasonFinalSummary({
                 size="md"
                 className="uppercase tracking-wider font-mono"
               >
-                Campeao de pilotos
+                {t(locale, "public.seasonFinalSummary.driverChampion")}
               </Badge>
             </div>
             {driverChampion ? (
@@ -141,7 +147,7 @@ export function SeasonFinalSummary({
                 </p>
               </>
             ) : (
-              <p className="text-sm text-zinc-500">Dados insuficientes para definir campeao.</p>
+              <p className="text-sm text-zinc-500">{t(locale, "public.seasonFinalSummary.insufficientChampionData")}</p>
             )}
           </div>
 
@@ -153,7 +159,7 @@ export function SeasonFinalSummary({
                 size="md"
                 className="uppercase tracking-wider font-mono"
               >
-                Campeao de equipes
+                {t(locale, "public.seasonFinalSummary.teamChampion")}
               </Badge>
             </div>
             {teamChampion ? (
@@ -182,7 +188,7 @@ export function SeasonFinalSummary({
                 </p>
               </>
             ) : (
-              <p className="text-sm text-zinc-500">Dados insuficientes para definir campeao.</p>
+              <p className="text-sm text-zinc-500">{t(locale, "public.seasonFinalSummary.insufficientChampionData")}</p>
             )}
           </div>
 
@@ -194,17 +200,17 @@ export function SeasonFinalSummary({
                 size="md"
                 className="uppercase tracking-wider font-mono"
               >
-                Corridas concluidas
+                {t(locale, "public.seasonFinalSummary.completedRaces")}
               </Badge>
             </div>
             <p className="text-white font-semibold">{completedRacesCount}</p>
-            <p className="text-sm text-zinc-500">total na temporada</p>
+            <p className="text-sm text-zinc-500">{t(locale, "public.seasonFinalSummary.totalInSeason")}</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <TopList title="Top 3 Pilotos" entries={topDrivers} />
-          <TopList title="Top 3 Equipes" entries={topTeams} />
+          <TopList locale={locale} title={t(locale, "public.seasonFinalSummary.topDrivers")} entries={topDrivers} />
+          <TopList locale={locale} title={t(locale, "public.seasonFinalSummary.topTeams")} entries={topTeams} />
         </div>
 
         {showLinks && (
@@ -213,14 +219,14 @@ export function SeasonFinalSummary({
               href={standingsHref}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition-colors"
             >
-              Ver classificacao completa
+              {t(locale, "public.seasonFinalSummary.viewFullStandings")}
               <ArrowRight size={16} />
             </Link>
             <Link
               href={racesHref}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 transition-colors"
             >
-              Ver corridas da temporada
+              {t(locale, "public.seasonFinalSummary.viewSeasonRaces")}
               <ArrowRight size={16} />
             </Link>
           </div>

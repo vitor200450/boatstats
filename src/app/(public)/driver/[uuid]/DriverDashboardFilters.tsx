@@ -1,6 +1,8 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { AppLocale } from "@/i18n/config";
+import { t } from "@/i18n/messages";
 
 type Option = {
   id: string;
@@ -8,6 +10,7 @@ type Option = {
 };
 
 type DriverDashboardFiltersProps = {
+  locale: AppLocale;
   leagueOptions: Option[];
   seasonOptions: Option[];
   selectedLeagueId: string;
@@ -16,6 +19,7 @@ type DriverDashboardFiltersProps = {
 };
 
 export function DriverDashboardFilters({
+  locale,
   leagueOptions,
   seasonOptions,
   selectedLeagueId,
@@ -36,7 +40,7 @@ export function DriverDashboardFilters({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 w-full lg:w-auto">
       <div>
-        <label className="block text-xs text-zinc-500 mb-1">Liga</label>
+        <label className="block text-xs text-zinc-500 mb-1">{t(locale, "public.driverPage.filterLeague")}</label>
         <select
           value={selectedLeagueId}
           onChange={(event) => updateQuery("league", event.target.value)}
@@ -51,7 +55,7 @@ export function DriverDashboardFilters({
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-500 mb-1">Temporada</label>
+        <label className="block text-xs text-zinc-500 mb-1">{t(locale, "public.driverPage.filterSeason")}</label>
         <select
           value={selectedSeasonId}
           onChange={(event) => updateQuery("season", event.target.value)}
@@ -66,7 +70,7 @@ export function DriverDashboardFilters({
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-500 mb-1">Contar DC/DNF</label>
+        <label className="block text-xs text-zinc-500 mb-1">{t(locale, "public.driverPage.filterCountDnfs")}</label>
         <div className="grid grid-cols-2 bg-zinc-950 border border-zinc-800 rounded-lg p-1">
           <button
             type="button"
@@ -77,7 +81,7 @@ export function DriverDashboardFilters({
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            Não
+            {t(locale, "public.driverPage.filterNo")}
           </button>
           <button
             type="button"
@@ -88,14 +92,14 @@ export function DriverDashboardFilters({
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            Sim
+            {t(locale, "public.driverPage.filterYes")}
           </button>
         </div>
       </div>
 
       <div className="flex items-end">
         <p className="text-xs text-zinc-500 leading-5">
-          Atualização instantânea ao alterar os filtros.
+          {t(locale, "public.driverPage.filterAutoUpdate")}
         </p>
       </div>
     </div>

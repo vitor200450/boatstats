@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { Badge } from "@/components/Badge";
+import type { AppLocale } from "@/i18n/config";
+import { t } from "@/i18n/messages";
 
 type TeamInfo = {
   id: string;
@@ -194,6 +196,7 @@ function TeamLogo({ team, size }: { team: TeamInfo; size: "sm" | "lg" }) {
 }
 
 export function PublicStandingsTableClient({
+  locale,
   tab,
   driverStandings,
   teamStandings,
@@ -203,6 +206,7 @@ export function PublicStandingsTableClient({
   teamSlotNamesByTeamRace,
   teamRoundContributors,
 }: {
+  locale: AppLocale;
   tab: "drivers" | "teams";
   driverStandings: Standing[];
   teamStandings: Standing[];
@@ -225,7 +229,7 @@ export function PublicStandingsTableClient({
       <>
         <div className="md:hidden divide-y divide-zinc-800/50">
           {driverStandings.length === 0 ? (
-            <div className="px-6 py-12 text-center text-zinc-500">Nenhum piloto pontuou nesta temporada ainda.</div>
+            <div className="px-6 py-12 text-center text-zinc-500">{t(locale, "public.leagueStandingsTable.noDriverStandings")}</div>
           ) : (
             driverStandings.map((standing, idx) => {
               const gap = idx === 0 ? null : driverStandings[0].totalPoints - standing.totalPoints;
@@ -244,7 +248,7 @@ export function PublicStandingsTableClient({
                         <>
                           <img
                             src={`https://mc-heads.net/avatar/${standing.driver.uuid}/32`}
-                            alt={standing.driver.currentName || "Desconhecido"}
+                            alt={standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                             className="w-8 h-8 rounded-md shrink-0 bg-zinc-800"
                           />
                           <div className="min-w-0">
@@ -252,7 +256,7 @@ export function PublicStandingsTableClient({
                               href={`/driver/${standing.driver.uuid}`}
                               className="block truncate text-white font-medium hover:text-cyan-400 transition-colors"
                             >
-                              {standing.driver.currentName || "Desconhecido"}
+                              {standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                             </Link>
                             {team && (
                               <div className="flex items-center gap-1.5 mt-0.5">
@@ -266,14 +270,14 @@ export function PublicStandingsTableClient({
                           </div>
                         </>
                       ) : (
-                        <span className="text-zinc-500 italic">Piloto removido</span>
+                        <span className="text-zinc-500 italic">{t(locale, "public.leagueStandingsTable.driverRemoved")}</span>
                       )}
                     </div>
                     <span className="text-white font-bold font-mono text-base shrink-0">{standing.totalPoints}</span>
                   </div>
                   <div className="mt-3 flex items-center gap-2">
-                    <Badge>Vitorias: {standing.wins}</Badge>
-                    <Badge>Podios: {standing.podiums}</Badge>
+                    <Badge>{t(locale, "public.leagueStandingsTable.winsLabel")}: {standing.wins}</Badge>
+                    <Badge>{t(locale, "public.leagueStandingsTable.podiumsLabel")}: {standing.podiums}</Badge>
                     {gap !== null && <Badge className="font-mono">-{gap} pts</Badge>}
                   </div>
                   {rows.length > 0 && (
@@ -281,13 +285,13 @@ export function PublicStandingsTableClient({
                       type="button"
                       onClick={() =>
                         setModal({
-                          title: `Progressao - ${standing.driver?.currentName ?? "Piloto"}`,
+                          title: `${t(locale, "public.leagueStandingsTable.progressionTitlePrefix")} - ${standing.driver?.currentName ?? t(locale, "public.leagueStandingsTable.driverFallback")}`,
                           rows,
                         })
                       }
                       className="mt-2 block text-[11px] text-cyan-400 hover:text-cyan-300"
                     >
-                      Detalhes da temporada
+                      {t(locale, "public.leagueStandingsTable.seasonDetails")}
                     </button>
                   )}
                 </div>
@@ -300,18 +304,18 @@ export function PublicStandingsTableClient({
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-zinc-400 bg-zinc-950/40 uppercase font-mono border-b border-zinc-800">
               <tr>
-                <th className="px-6 py-4 font-medium w-16">Pos</th>
-                <th className="px-4 py-4 font-medium">Piloto</th>
-                <th className="px-4 py-4 font-medium text-center">Vitorias</th>
-                <th className="px-4 py-4 font-medium text-center">Podios</th>
-                <th className="px-6 py-4 font-medium text-right">Pontos</th>
-              </tr>
-            </thead>
+                 <th className="px-6 py-4 font-medium w-16">{t(locale, "public.leagueStandingsTable.tablePosition")}</th>
+                 <th className="px-4 py-4 font-medium">{t(locale, "public.leagueStandingsTable.tableDriver")}</th>
+                 <th className="px-4 py-4 font-medium text-center">{t(locale, "public.leagueStandingsTable.tableWins")}</th>
+                 <th className="px-4 py-4 font-medium text-center">{t(locale, "public.leagueStandingsTable.tablePodiums")}</th>
+                 <th className="px-6 py-4 font-medium text-right">{t(locale, "public.leagueStandingsTable.tablePoints")}</th>
+               </tr>
+             </thead>
             <tbody className="divide-y divide-zinc-800/50">
               {driverStandings.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-zinc-500">
-                    Nenhum piloto pontuou nesta temporada ainda.
+                    {t(locale, "public.leagueStandingsTable.noDriverStandings")}
                   </td>
                 </tr>
               ) : (
@@ -334,7 +338,7 @@ export function PublicStandingsTableClient({
                             <>
                               <img
                                 src={`https://mc-heads.net/avatar/${standing.driver.uuid}/32`}
-                                alt={standing.driver.currentName || "Desconhecido"}
+                                 alt={standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                                 className="w-7 h-7 rounded-md shrink-0 bg-zinc-800"
                               />
                               <div>
@@ -342,7 +346,7 @@ export function PublicStandingsTableClient({
                                   href={`/driver/${standing.driver.uuid}`}
                                   className="text-white font-medium hover:text-cyan-400 transition-colors"
                                 >
-                                  {standing.driver.currentName || "Desconhecido"}
+                                  {standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                                 </Link>
                                 {gap !== null && (
                                   <span className="text-xs text-zinc-600 font-mono ml-2">-{gap} pts</span>
@@ -362,21 +366,21 @@ export function PublicStandingsTableClient({
                                     type="button"
                                     onClick={() =>
                                       setModal({
-                                        title: `Progressao - ${standing.driver?.currentName ?? "Piloto"}`,
-                                        rows,
-                                      })
-                                    }
+                                         title: `${t(locale, "public.leagueStandingsTable.progressionTitlePrefix")} - ${standing.driver?.currentName ?? t(locale, "public.leagueStandingsTable.driverFallback")}`,
+                                         rows,
+                                       })
+                                     }
                                     className="mt-1 block text-[11px] text-cyan-400 hover:text-cyan-300"
                                   >
-                                    Detalhes da temporada
-                                  </button>
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <span className="text-zinc-500 italic">Piloto removido</span>
-                          )}
-                        </div>
+                                     {t(locale, "public.leagueStandingsTable.seasonDetails")}
+                                   </button>
+                                 )}
+                               </div>
+                             </>
+                           ) : (
+                             <span className="text-zinc-500 italic">{t(locale, "public.leagueStandingsTable.driverRemoved")}</span>
+                           )}
+                         </div>
                       </td>
                       <td className="px-4 py-4 text-center">
                         {standing.wins > 0 ? (
@@ -402,7 +406,7 @@ export function PublicStandingsTableClient({
             </tbody>
           </table>
         </div>
-        {modal && <ProgressionModal modal={modal} onClose={() => setModal(null)} />}
+        {modal && <ProgressionModal locale={locale} modal={modal} onClose={() => setModal(null)} />}
       </>
     );
   }
@@ -411,7 +415,7 @@ export function PublicStandingsTableClient({
     <>
       <div className="md:hidden divide-y divide-zinc-800/50">
         {teamStandings.length === 0 ? (
-          <div className="px-6 py-12 text-center text-zinc-500">Ainda nao ha classificacao disponivel.</div>
+          <div className="px-6 py-12 text-center text-zinc-500">{t(locale, "public.leagueStandingsTable.noTeamStandings")}</div>
         ) : (
           teamStandings.map((standing, idx) => {
             const gap = idx === 0 ? null : teamStandings[0].totalPoints - standing.totalPoints;
@@ -433,14 +437,14 @@ export function PublicStandingsTableClient({
                         <span className="text-white font-medium truncate">{standing.team.name}</span>
                       </>
                     ) : (
-                      <span className="text-zinc-500 italic">Equipe removida</span>
+                      <span className="text-zinc-500 italic">{t(locale, "public.leagueStandingsTable.teamRemoved")}</span>
                     )}
                   </div>
                   <span className="text-white font-bold font-mono text-base shrink-0">{standing.totalPoints}</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  <Badge>Vitorias: {standing.wins}</Badge>
-                  <Badge>Podios: {standing.podiums}</Badge>
+                  <Badge>{t(locale, "public.leagueStandingsTable.winsLabel")}: {standing.wins}</Badge>
+                  <Badge>{t(locale, "public.leagueStandingsTable.podiumsLabel")}: {standing.podiums}</Badge>
                   {gap !== null && <Badge className="font-mono">-{gap} pts</Badge>}
                 </div>
                 {rows.length > 0 && (
@@ -448,13 +452,13 @@ export function PublicStandingsTableClient({
                     type="button"
                     onClick={() =>
                       setModal({
-                        title: `Progressao - ${standing.team?.name ?? "Equipe"}`,
+                        title: `${t(locale, "public.leagueStandingsTable.progressionTitlePrefix")} - ${standing.team?.name ?? t(locale, "public.leagueStandingsTable.teamFallback")}`,
                         rows,
                       })
                     }
                     className="mt-2 block text-[11px] text-cyan-400 hover:text-cyan-300"
                   >
-                    Detalhes da temporada
+                    {t(locale, "public.leagueStandingsTable.seasonDetails")}
                   </button>
                 )}
               </div>
@@ -467,18 +471,18 @@ export function PublicStandingsTableClient({
         <table className="w-full text-sm text-left">
           <thead className="text-xs text-zinc-400 bg-zinc-950/40 uppercase font-mono border-b border-zinc-800">
             <tr>
-              <th className="px-6 py-4 font-medium w-16">Pos</th>
-              <th className="px-4 py-4 font-medium">Equipe</th>
-              <th className="px-4 py-4 font-medium text-center">Vitorias</th>
-              <th className="px-4 py-4 font-medium text-center">Podios</th>
-              <th className="px-6 py-4 font-medium text-right">Pontos</th>
+              <th className="px-6 py-4 font-medium w-16">{t(locale, "public.leagueStandingsTable.tablePosition")}</th>
+              <th className="px-4 py-4 font-medium">{t(locale, "public.leagueStandingsTable.tableTeam")}</th>
+              <th className="px-4 py-4 font-medium text-center">{t(locale, "public.leagueStandingsTable.tableWins")}</th>
+              <th className="px-4 py-4 font-medium text-center">{t(locale, "public.leagueStandingsTable.tablePodiums")}</th>
+              <th className="px-6 py-4 font-medium text-right">{t(locale, "public.leagueStandingsTable.tablePoints")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/50">
             {teamStandings.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-6 py-12 text-center text-zinc-500">
-                  Ainda nao ha classificacao disponivel.
+                  {t(locale, "public.leagueStandingsTable.noTeamStandings")}
                 </td>
               </tr>
             ) : (
@@ -512,20 +516,20 @@ export function PublicStandingsTableClient({
                                     type="button"
                                     onClick={() =>
                                       setModal({
-                                        title: `Progressao - ${standing.team?.name ?? "Equipe"}`,
-                                        rows,
-                                      })
-                                    }
+                                         title: `${t(locale, "public.leagueStandingsTable.progressionTitlePrefix")} - ${standing.team?.name ?? t(locale, "public.leagueStandingsTable.teamFallback")}`,
+                                         rows,
+                                       })
+                                     }
                                     className="mt-1 text-[11px] text-cyan-400 hover:text-cyan-300"
                                   >
-                                    Detalhes da temporada
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-zinc-500 italic">Equipe removida</span>
+                                     {t(locale, "public.leagueStandingsTable.seasonDetails")}
+                                   </button>
+                                 </div>
+                               )}
+                             </div>
+                           </>
+                         ) : (
+                          <span className="text-zinc-500 italic">{t(locale, "public.leagueStandingsTable.teamRemoved")}</span>
                         )}
                       </div>
                     </td>
@@ -553,15 +557,17 @@ export function PublicStandingsTableClient({
           </tbody>
         </table>
       </div>
-      {modal && <ProgressionModal modal={modal} onClose={() => setModal(null)} />}
+      {modal && <ProgressionModal locale={locale} modal={modal} onClose={() => setModal(null)} />}
     </>
   );
 }
 
 function ProgressionModal({
+  locale,
   modal,
   onClose,
 }: {
+  locale: AppLocale;
   modal: { title: string; rows: RaceRow[] };
   onClose: () => void;
 }) {
@@ -574,7 +580,7 @@ function ProgressionModal({
           <div className="relative flex items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-wider text-zinc-500 font-mono">
-                Progressao da temporada
+                {t(locale, "public.leagueStandingsTable.seasonProgression")}
               </p>
               <h3 className="text-white text-xl font-semibold mt-1">{modal.title}</h3>
             </div>
@@ -588,10 +594,10 @@ function ProgressionModal({
           </div>
           <div className="relative mt-4 flex flex-wrap items-center gap-2">
             <Badge size="md" className="font-mono">
-              Corridas com pontuacao: {modal.rows.length}
+              {t(locale, "public.leagueStandingsTable.racesWithPoints")}: {modal.rows.length}
             </Badge>
             <Badge size="md" variant="accent" className="font-mono">
-              Total no detalhe: {totalFromRows} pts
+              {t(locale, "public.leagueStandingsTable.totalInDetails")}: {totalFromRows} pts
             </Badge>
           </div>
         </div>
@@ -601,25 +607,25 @@ function ProgressionModal({
               typeof row.position === "number" && row.position > 0 && row.position <= 3;
             const medalTone =
               row.position === 1
-                ? {
-                    card: "border-yellow-400/55 bg-yellow-500/10 ring-1 ring-yellow-500/20",
-                    title: "text-zinc-100",
-                    badge: "bg-zinc-900 text-zinc-200 border-zinc-600",
-                    label: "Ouro",
-                  }
+                    ? {
+                        card: "border-yellow-400/55 bg-yellow-500/10 ring-1 ring-yellow-500/20",
+                        title: "text-zinc-100",
+                        badge: "bg-zinc-900 text-zinc-200 border-zinc-600",
+                        label: t(locale, "public.leagueStandingsTable.goldLabel"),
+                      }
                 : row.position === 2
                   ? {
                       card: "border-slate-300/55 bg-slate-300/10 ring-1 ring-slate-300/20",
                       title: "text-zinc-100",
                       badge: "bg-zinc-900 text-zinc-200 border-zinc-600",
-                      label: "Prata",
+                      label: t(locale, "public.leagueStandingsTable.silverLabel"),
                     }
                   : row.position === 3
                     ? {
                         card: "border-amber-500/55 bg-amber-600/10 ring-1 ring-amber-500/20",
                         title: "text-zinc-100",
                         badge: "bg-zinc-900 text-zinc-200 border-zinc-600",
-                        label: "Bronze",
+                        label: t(locale, "public.leagueStandingsTable.bronzeLabel"),
                       }
                     : {
                         card: "",
@@ -639,7 +645,7 @@ function ProgressionModal({
               >
                 {isPodium && (
                   <div className="mb-2 text-[11px] font-mono uppercase tracking-wide text-zinc-400">
-                    Chegada no podio
+                    {t(locale, "public.leagueStandingsTable.podiumFinish")}
                   </div>
                 )}
                 <div className="flex items-center justify-between gap-3">

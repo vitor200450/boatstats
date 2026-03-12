@@ -924,6 +924,7 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
       {selectedSeason.status === "COMPLETED" ? (
         <div className="mb-6">
           <SeasonFinalSummary
+            locale={locale}
             driverChampion={driverChampion}
             teamChampion={teamChampion}
             topDrivers={topDrivers}
@@ -1284,6 +1285,7 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
             </div>
           ) : (
             <PublicStandingsTableClient
+              locale={locale}
               tab={tab as "drivers" | "teams"}
               driverStandings={scoringDriverStandings}
               teamStandings={teamStandings}

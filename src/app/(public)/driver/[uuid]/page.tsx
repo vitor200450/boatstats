@@ -9,6 +9,7 @@ import {
   MapPin,
   Clock,
   Zap,
+  Info,
   ChevronUp,
   ChevronDown,
   Target,
@@ -170,7 +171,7 @@ export default async function DriverProfilePage({
     notFound();
   }
 
-  const racesData = await getDriverRacesDataCached(driver.id);
+  const racesDataRaw = await getDriverRacesDataCached(driver.id);
 
   type DriverRoundResult = {
     position: number;
@@ -182,7 +183,7 @@ export default async function DriverProfilePage({
     disqualified?: boolean;
   };
 
-  type DriverEventRound = (typeof racesData)[number]["eventRounds"][number];
+  type DriverEventRound = (typeof racesDataRaw)[number]["eventRounds"][number];
 
   const isDidNotFinish = (result: DriverRoundResult | undefined): boolean => {
     if (!result) return false;
@@ -230,6 +231,11 @@ export default async function DriverProfilePage({
       raceRounds[0]
     );
   };
+
+  const racesData = racesDataRaw.filter((race) => {
+    const mainRaceRound = selectMainRaceRound(race.eventRounds);
+    return Boolean(mainRaceRound?.results?.[0]);
+  });
 
   const leagueMap = new Map<string, { id: string; name: string }>();
   for (const race of racesData) {
@@ -537,7 +543,7 @@ export default async function DriverProfilePage({
 
   // Format date/time helper
   const formatDateTime = (date: Date | null) => {
-    if (!date) return { date: "N/A", time: "" };
+    if (!date) return { date: "--", time: "" };
     const d = new Date(date);
     return {
       date: d.toLocaleDateString(locale, {
@@ -892,19 +898,19 @@ export default async function DriverProfilePage({
                   </p>
                   <div className="grid grid-cols-2 gap-2 mb-3">
                     <div className="rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
-                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Top 1</p>
+                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t(locale, "public.driverPage.top1")}</p>
                       <p className="text-lg font-mono text-zinc-100">{careerAggregateStats.top1Total}</p>
                     </div>
                     <div className="rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
-                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Top 3</p>
+                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t(locale, "public.driverPage.top3")}</p>
                       <p className="text-lg font-mono text-zinc-100">{careerAggregateStats.top3Total}</p>
                     </div>
                     <div className="rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
-                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Top 5</p>
+                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t(locale, "public.driverPage.top5")}</p>
                       <p className="text-lg font-mono text-zinc-100">{careerAggregateStats.top5Total}</p>
                     </div>
                     <div className="rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
-                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Top 10</p>
+                      <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t(locale, "public.driverPage.top10")}</p>
                       <p className="text-lg font-mono text-zinc-100">{careerAggregateStats.top10Total}</p>
                     </div>
                     <div className="rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
@@ -916,7 +922,7 @@ export default async function DriverProfilePage({
                     <span className="text-zinc-500">{t(locale, "public.driverPage.bestPhase")} </span>
                     {careerAggregateStats.melhorFase ? (
                       <span className="text-zinc-200">
-                        {careerAggregateStats.melhorFase.leagueName} - {careerAggregateStats.melhorFase.seasonName} ({careerAggregateStats.melhorFase.points} pts, {careerAggregateStats.melhorFase.top10Rate.toFixed(1)}% Top 10)
+                        {careerAggregateStats.melhorFase.leagueName} - {careerAggregateStats.melhorFase.seasonName} ({careerAggregateStats.melhorFase.points} pts, {careerAggregateStats.melhorFase.top10Rate.toFixed(1)}% {t(locale, "public.driverPage.top10")})
                       </span>
                     ) : (
                       <span className="text-zinc-500">{t(locale, "public.driverPage.insufficientData")}</span>
@@ -926,9 +932,22 @@ export default async function DriverProfilePage({
               </div>
 
               <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-3">
-                <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-2">
+                <div className="mb-2 flex items-center gap-2">
+                  <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">
                     {t(locale, "public.driverPage.careerInsights")}
-                </p>
+                  </p>
+                  <details className="relative inline-flex items-center group/insights-help">
+                    <summary
+                      title={t(locale, "public.driverPage.careerInsightsTooltip")}
+                      className="list-none [&::-webkit-details-marker]:hidden cursor-pointer"
+                    >
+                      <Info className="w-3.5 h-3.5 text-zinc-500" />
+                    </summary>
+                    <span className="pointer-events-none absolute left-1/2 top-0 z-20 w-72 -translate-x-1/2 -translate-y-[calc(100%+8px)] rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-[11px] normal-case tracking-normal text-zinc-200 opacity-0 shadow-lg transition-opacity group-hover/insights-help:opacity-100 group-open/insights-help:opacity-100">
+                      {t(locale, "public.driverPage.careerInsightsTooltip")}
+                    </span>
+                  </details>
+                </div>
                 {careerAggregateStats.racesDisputadas < 10 ? (
                   <p className="text-sm text-zinc-500">
                     {t(locale, "public.driverPage.insightsAfterTenRaces")}
@@ -952,6 +971,7 @@ export default async function DriverProfilePage({
         <div className="flex items-center gap-2 w-max min-w-full">
         <Link
           href={`?${historyTabParams.toString()}`}
+          scroll={false}
           className={`px-4 py-2 text-sm font-mono rounded-lg transition-colors ${
             activeTab === "history"
               ? "bg-zinc-800 text-cyan-300 border border-zinc-700"
@@ -962,6 +982,7 @@ export default async function DriverProfilePage({
         </Link>
         <Link
           href={`?${performanceTabParams.toString()}`}
+          scroll={false}
           className={`px-4 py-2 text-sm font-mono rounded-lg transition-colors ${
             activeTab === "performance"
               ? "bg-zinc-800 text-cyan-300 border border-zinc-700"
@@ -972,6 +993,7 @@ export default async function DriverProfilePage({
         </Link>
         <Link
           href={`?${timeTrialTabParams.toString()}`}
+          scroll={false}
           className={`px-4 py-2 text-sm font-mono rounded-lg transition-colors ${
             activeTab === "timetrial"
               ? "bg-zinc-800 text-cyan-300 border border-zinc-700"
@@ -996,6 +1018,7 @@ export default async function DriverProfilePage({
           </div>
 
           <DriverDashboardFilters
+            locale={locale}
             leagueOptions={leagueOptions}
             seasonOptions={seasonOptions.map((season) => ({
               id: season.id,
@@ -1240,7 +1263,7 @@ export default async function DriverProfilePage({
               const getFinalPosition = (
                 result: DriverRoundResult | undefined,
               ) => {
-                if (!result || isDidNotFinish(result)) return "DC/DNF";
+                if (!result || isDidNotFinish(result)) return t(locale, "public.driverPage.dnfShort");
                 return `P${result.position}`;
               };
 
@@ -1515,8 +1538,8 @@ export default async function DriverProfilePage({
                                     }}
                                   >
                                     <Zap size={12} className="text-white" />
-                                    <span className="text-white">VR</span>
-                                  </div>
+                                      <span className="text-white">{t(locale, "public.driverPage.fastestLapBadge")}</span>
+                                    </div>
                                   <span className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200 opacity-0 shadow-lg transition-opacity group-hover/fastlap:opacity-100">
                                     {formatLapTime(raceResult.fastestLapTime)}
                                   </span>

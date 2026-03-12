@@ -40,6 +40,25 @@ function getResultStatus(result: {
   return "FINISHED";
 }
 
+function translateRaceStatus(
+  status: string,
+  locale: "pt-BR" | "en",
+): string {
+  if (status === "COMPLETED") {
+    return t(locale, "public.leagueDetail.statusCompleted");
+  }
+
+  if (status === "PENDING") {
+    return t(locale, "public.leagueDetail.statusPending");
+  }
+
+  if (status === "IN_PROGRESS") {
+    return t(locale, "public.leagueDetail.statusInProgress");
+  }
+
+  return status;
+}
+
 const getRaceBaseData = unstable_cache(
   async (raceId: string) => {
     return prisma.race.findUnique({
@@ -182,7 +201,7 @@ export default async function PublicRaceResultsPage({
             }
             className="uppercase font-mono"
           >
-            {race.status}
+            {translateRaceStatus(race.status, locale)}
           </Badge>
         </div>
       </div>
@@ -250,9 +269,9 @@ export default async function PublicRaceResultsPage({
                               <div className="min-w-0">
                                 <div className="font-mono text-sm mb-1">
                                   {status === "DSQ" ? (
-                                    <span className="text-red-400">DSQ</span>
+                                    <span className="text-red-400">{t(locale, "public.racePage.dsqShort")}</span>
                                   ) : status === "DNF" ? (
-                                    <span className="text-zinc-300">DC/DNF</span>
+                                    <span className="text-zinc-300">{t(locale, "public.racePage.dnfShort")}</span>
                                   ) : (
                                     <span className="text-zinc-300">P{result.position}</span>
                                   )}
@@ -314,9 +333,9 @@ export default async function PublicRaceResultsPage({
                               <tr key={result.id} className="hover:bg-zinc-800/20 transition-colors">
                                 <td className="px-5 py-3 font-mono">
                                   {status === "DSQ" ? (
-                                    <span className="text-red-400">DSQ</span>
+                                    <span className="text-red-400">{t(locale, "public.racePage.dsqShort")}</span>
                                   ) : status === "DNF" ? (
-                                    <span className="text-zinc-300">DC/DNF</span>
+                                    <span className="text-zinc-300">{t(locale, "public.racePage.dnfShort")}</span>
                                   ) : (
                                     <span className="text-zinc-300">P{result.position}</span>
                                   )}

@@ -375,7 +375,6 @@ export default async function TrackDetailPage({ params }: PageProps) {
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wider text-zinc-500 font-mono border-b border-zinc-800">
                     <th className="px-6 py-3">{t(locale, "public.trackDetail.rankLabel")}</th>
-                    <th className="px-6 py-3">{t(locale, "public.trackDetail.rankLabel")}</th>
                     <th className="px-6 py-3">{t(locale, "public.trackDetail.driverLabel")}</th>
                     <th className="px-6 py-3">{t(locale, "public.trackDetail.timeLabel")}</th>
                   </tr>
