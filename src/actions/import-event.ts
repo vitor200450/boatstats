@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { Prisma } from "@prisma/client";
 
 import { getEventResults } from "@/services/frosthexAPI";
 import { prisma } from "@/lib/prisma";
@@ -46,7 +47,7 @@ export async function importEventData(leagueId: string, apiEventId: string) {
     const pointsSystem = undefined;
 
     // Use transaction to ensure either everything exports or nothing does
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Track UPSERT (Create if new track)
       const track = await tx.track.upsert({
         where: { apiName: eventData.track_name },
