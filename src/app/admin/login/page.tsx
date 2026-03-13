@@ -36,7 +36,7 @@ export default async function AdminLoginPage({
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center h-full px-4">
+    <div className="min-h-[calc(100dvh-4rem)] flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-lg">
         <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-xl shadow-2xl relative overflow-hidden group">
           <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-cyan-900/20 to-transparent pointer-events-none"></div>

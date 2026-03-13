@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { AdminChecklistToast } from "@/components/admin/AdminChecklistToast";
@@ -27,8 +28,14 @@ export default async function AdminLayout({
   const userName = session?.user?.name || t(locale, "admin.topbar.fallbackUser");
   const userInitials = userName.substring(0, 2).toUpperCase();
   const userImage = session?.user?.image;
-  const userRole = session?.user?.role || "ADMIN";
-  const checklistSummary = isAuthenticated ? await getAdminChecklistSummary() : null;
+  const userRole = session?.user?.role || "USER";
+  const isAdminRole = userRole === "ADMIN" || userRole === "SUPER_ADMIN";
+
+  if (isAuthenticated && !isAdminRole) {
+    redirect(addLocalePrefix("/", locale));
+  }
+
+  const checklistSummary = isAuthenticated && isAdminRole ? await getAdminChecklistSummary() : null;
 
   return (
     <div className="bg-neutral-950 text-neutral-200 font-sans antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200">
@@ -85,13 +92,17 @@ export default async function AdminLayout({
         </div>
       </nav>
 
-      <div className="flex min-h-screen pt-16">
-        <AdminSidebar />
+      {isAuthenticated && isAdminRole ? (
+        <div className="flex min-h-screen pt-16">
+          <AdminSidebar userRole={userRole} />
 
-        <main className="flex-1 bg-neutral-950 p-6 md:p-10">
-          {children}
-        </main>
-      </div>
+          <main className="flex-1 bg-neutral-950 p-6 md:p-10">
+            {children}
+          </main>
+        </div>
+      ) : (
+        <main className="mt-16 min-h-[calc(100dvh-4rem)] bg-neutral-950">{children}</main>
+      )}
       {checklistSummary && <AdminChecklistToast summary={checklistSummary} />}
     </div>
   );

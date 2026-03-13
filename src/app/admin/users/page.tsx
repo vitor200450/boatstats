@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { notFound } from "next/navigation";
 
 import UserTable from "./UserTable";
 
@@ -15,22 +16,7 @@ export default async function UsersManagementPage() {
   });
 
   if (!isSuperAdmin) {
-    return (
-      <div className="flex items-center justify-center h-full w-full">
-        <div className="text-center bg-red-950/20 border border-red-500/30 p-8 rounded-xl backdrop-blur-sm max-w-lg">
-          <span className="material-symbols-outlined text-4xl text-red-500 mb-4 block">
-            gavel
-          </span>
-          <h1 className="text-xl font-bold font-mono text-white mb-2">
-            ACCESS DENIED
-          </h1>
-          <p className="text-neutral-400">
-            This module is restricted to Super Administrators. You do not have
-            the necessary clearance to manage the global access control list.
-          </p>
-        </div>
-      </div>
-    );
+    notFound();
   }
 
   // Fetch all users

@@ -6,7 +6,11 @@ import { signOut } from "next-auth/react";
 
 import { addLocalePrefix, getLocaleFromPathname, parseLocaleFromPathname } from "@/i18n/navigation";
 
-export default function AdminSidebar() {
+type AdminSidebarProps = {
+  userRole: string;
+};
+
+export default function AdminSidebar({ userRole }: AdminSidebarProps) {
   const pathname = usePathname();
   const locale = getLocaleFromPathname(pathname);
   const normalizedPathname = parseLocaleFromPathname(pathname).pathnameWithoutLocale;
@@ -15,6 +19,7 @@ export default function AdminSidebar() {
   const leaguesHref = addLocalePrefix("/admin/leagues", locale);
   const usersHref = addLocalePrefix("/admin/users", locale);
   const loginHref = addLocalePrefix("/admin/login", locale);
+  const isSuperAdmin = userRole === "SUPER_ADMIN";
 
   const isActive = (path: string) => {
     if (path === "/admin") {
@@ -69,21 +74,23 @@ export default function AdminSidebar() {
             Administração
           </div>
           <nav className="space-y-1">
-            <Link
-              href={usersHref}
-              className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                isActive("/admin/users")
-                  ? "text-white bg-neutral-800/80"
-                  : "text-neutral-400 hover:text-white hover:bg-neutral-800/50"
-              }`}
-            >
-              <span
-                className={`material-symbols-outlined text-lg ${isActive("/admin/users") ? "text-cyan-400" : ""}`}
+            {isSuperAdmin && (
+              <Link
+                href={usersHref}
+                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                  isActive("/admin/users")
+                    ? "text-white bg-neutral-800/80"
+                    : "text-neutral-400 hover:text-white hover:bg-neutral-800/50"
+                }`}
               >
-                shield_person
-              </span>
-              Acesso de usuários
-            </Link>
+                <span
+                  className={`material-symbols-outlined text-lg ${isActive("/admin/users") ? "text-cyan-400" : ""}`}
+                >
+                  shield_person
+                </span>
+                Acesso de usuários
+              </Link>
+            )}
             <button
               onClick={() => signOut({ callbackUrl: loginHref })}
               className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-neutral-400 hover:text-white hover:bg-neutral-800/50 rounded-md transition-colors"
