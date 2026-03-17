@@ -368,6 +368,8 @@ const getSeasonTeamRoundContributors = unstable_cache(
             driverId: true,
             joinedAt: true,
             leftAt: true,
+            effectiveFromRound: true,
+            effectiveToRound: true,
             driver: {
               select: {
                 uuid: true,
@@ -377,7 +379,7 @@ const getSeasonTeamRoundContributors = unstable_cache(
           },
         }),
         prisma.$queryRaw`
-          SELECT "seasonId", "teamId", "driverId", "priority"
+          SELECT "seasonId", "teamId", "driverId", "priority", "effectiveFromRound", "effectiveToRound"
           FROM "SeasonTeamDepthChartEntry"
           WHERE "seasonId" = ${seasonId}
           ORDER BY "teamId" ASC, "priority" ASC
@@ -443,6 +445,8 @@ const getSeasonTeamRoundContributors = unstable_cache(
               driverId: assignment.driverId,
               joinedAt: assignment.joinedAt,
               leftAt: assignment.leftAt,
+              effectiveFromRound: assignment.effectiveFromRound,
+              effectiveToRound: assignment.effectiveToRound,
             },
           ]
         : [];
@@ -453,6 +457,8 @@ const getSeasonTeamRoundContributors = unstable_cache(
       teamId: string;
       driverId: string;
       priority: number;
+      effectiveFromRound: number;
+      effectiveToRound: number | null;
     }>;
     const normalizedSlotRosterEntries = slotRosterEntries as Array<{
       seasonId: string;
