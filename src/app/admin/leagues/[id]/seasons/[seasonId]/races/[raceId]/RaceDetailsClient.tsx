@@ -127,6 +127,7 @@ type RaceClient = {
   id: string;
   seasonId: string;
   round: number;
+  name?: string;
   apiEventId: string | null;
   reverseGridEnabled?: boolean;
   eventRounds: EventRoundClient[];
@@ -411,7 +412,7 @@ export function RaceDetailsClient({
             round,
             raceName: `Rodada ${round}`,
           }))
-        : [{ round: race.round, raceName: race.name }];
+        : [{ round: race.round, raceName: race.name ?? `Rodada ${race.round}` }];
 
   const openRosterRoundModal = (teamId: string) => {
     setPendingRosterTeamId(teamId);

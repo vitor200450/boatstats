@@ -933,13 +933,16 @@ export async function assignDriverToTeam(
       return { success: false, error: resolvedRound.error ?? "Rodada de vigência inválida" };
     }
 
+    const effectiveRoundValue = resolvedRound.round;
+    const effectiveDateValue = resolvedRound.referenceDate;
+
     try {
       await upsertTemporalAssignment({
         seasonId,
         driverId: driver.id,
         teamId,
-        effectiveRound: resolvedRound.round,
-        effectiveDate: resolvedRound.referenceDate,
+        effectiveRound: effectiveRoundValue,
+        effectiveDate: effectiveDateValue,
       });
     } catch (assignmentError) {
       const message = assignmentError instanceof Error ? assignmentError.message : "";
@@ -972,9 +975,9 @@ export async function assignDriverToTeam(
           UPDATE "SeasonTeamAssignment"
           SET
             "teamId" = ${teamId},
-            "joinedAt" = ${resolvedRound.referenceDate},
+            "joinedAt" = ${effectiveDateValue},
             "leftAt" = NULL,
-            "effectiveFromRound" = ${resolvedRound.round},
+            "effectiveFromRound" = ${effectiveRoundValue},
             "effectiveToRound" = NULL
           WHERE "id" = ${latestRow[0].id}
         `;
@@ -986,8 +989,8 @@ export async function assignDriverToTeam(
             "effectiveToRound" = COALESCE(
               "effectiveToRound",
               CASE
-                WHEN "effectiveFromRound" < ${resolvedRound.round}
-                  THEN ${resolvedRound.round - 1}
+                WHEN "effectiveFromRound" < ${effectiveRoundValue}
+                  THEN ${effectiveRoundValue - 1}
                 ELSE "effectiveFromRound"
               END
             )
@@ -1107,12 +1110,15 @@ export async function removeDriverFromTeam(
       return { success: false, error: resolvedRound.error ?? "Rodada de vigência inválida" };
     }
 
+    const effectiveRoundValue = resolvedRound.round;
+    const effectiveDateValue = resolvedRound.referenceDate;
+
     await upsertTemporalAssignment({
       seasonId: assignment.seasonId,
       driverId: assignment.driverId,
       teamId: null,
-      effectiveRound: resolvedRound.round,
-      effectiveDate: resolvedRound.referenceDate,
+      effectiveRound: effectiveRoundValue,
+      effectiveDate: effectiveDateValue,
     });
 
     const reprocessResult = await reprocessSeasonStandings(
@@ -1207,12 +1213,15 @@ export async function transferDriver(
       return { success: false, error: resolvedRound.error ?? "Rodada de vigência inválida" };
     }
 
+    const effectiveRoundValue = resolvedRound.round;
+    const effectiveDateValue = resolvedRound.referenceDate;
+
     await upsertTemporalAssignment({
       seasonId,
       driverId,
       teamId: newTeamId,
-      effectiveRound: resolvedRound.round,
-      effectiveDate: resolvedRound.referenceDate,
+      effectiveRound: effectiveRoundValue,
+      effectiveDate: effectiveDateValue,
     });
 
     const reprocessResult = await reprocessSeasonStandings(seasonId, "TRANSFER");
