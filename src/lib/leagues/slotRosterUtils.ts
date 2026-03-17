@@ -13,6 +13,8 @@ export function fillMissingSlotRosters(
   teamAssignments: Array<{
     teamId: string;
     driverId: string;
+    effectiveFromRound?: number;
+    effectiveToRound?: number | null;
     joinedAt: Date;
     leftAt: Date | null;
   }>,
@@ -57,10 +59,18 @@ export function fillMissingSlotRosters(
         raceId: race.id,
       }));
       
-      // Find drivers in team assignments that are not in the inherited roster
-      const rosterDriverIds = new Set(lastRoster.map(e => e.driverId));
+      // Find drivers active in this round that are not in the inherited roster
+      const rosterDriverIds = new Set(lastRoster.map(e => `${e.teamId}:${e.driverId}`));
       const missingAssignments = teamAssignments.filter(
-        a => !rosterDriverIds.has(a.driverId) && !a.leftAt
+        (a) => {
+          const isActiveByRound =
+            typeof a.effectiveFromRound === 'number'
+              ? a.effectiveFromRound <= race.round &&
+                (a.effectiveToRound == null || a.effectiveToRound >= race.round)
+              : !a.leftAt;
+
+          return isActiveByRound && !rosterDriverIds.has(`${a.teamId}:${a.driverId}`);
+        }
       );
       
       // Add missing drivers as RESERVE with high priority

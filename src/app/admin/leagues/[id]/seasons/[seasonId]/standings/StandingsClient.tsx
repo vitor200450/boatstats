@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Trophy, Users, Minus, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Trophy, Users, Minus, X, RefreshCw } from "lucide-react";
+import { recalculateStandings } from "@/lib/leagues/importActions";
 
 interface TeamInfo {
   id: string;
@@ -130,6 +132,7 @@ function TeamLogo({ team, size }: { team: TeamInfo; size: "sm" | "lg" }) {
 }
 
 interface StandingsClientProps {
+  seasonId: string;
   driverStandings: Standing[];
   teamStandings: Standing[];
   driverTeamMap: Record<string, TeamInfo>;
@@ -552,9 +555,52 @@ function TeamTable({ standings, raceLabels, teamRaceContributors, onOpenDetails 
   );
 }
 
-export function StandingsClient({ driverStandings, teamStandings, driverTeamMap, raceLabels, driverRacePositions, teamRaceContributors }: StandingsClientProps) {
+export function StandingsClient({
+  seasonId,
+  driverStandings,
+  teamStandings,
+  driverTeamMap,
+  raceLabels,
+  driverRacePositions,
+  teamRaceContributors,
+}: StandingsClientProps) {
+  const router = useRouter();
   const [tab, setTab] = useState<"drivers" | "teams">("drivers");
   const [progressionModal, setProgressionModal] = useState<ProgressionModalState | null>(null);
+  const [reprocessing, setReprocessing] = useState(false);
+  const [reprocessStatus, setReprocessStatus] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  async function handleReprocessSeason(): Promise<void> {
+    if (reprocessing) return;
+
+    setReprocessing(true);
+    setReprocessStatus(null);
+    const result = await recalculateStandings(seasonId);
+
+    if (!result.success) {
+      setReprocessStatus({
+        type: "error",
+        message: result.error ?? "Erro ao reprocessar classificação",
+      });
+      setReprocessing(false);
+      return;
+    }
+
+    const durationLabel =
+      typeof result.durationMs === "number"
+        ? ` em ${(result.durationMs / 1000).toFixed(2)}s`
+        : "";
+
+    setReprocessStatus({
+      type: "success",
+      message: `Classificação reprocessada com sucesso${durationLabel}.`,
+    });
+    router.refresh();
+    setReprocessing(false);
+  }
 
   const driverLeader = driverStandings[0];
   const teamLeader = teamStandings[0];
@@ -623,7 +669,8 @@ export function StandingsClient({ driverStandings, teamStandings, driverTeamMap,
       {/* Tab + table */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
         {/* Tab header */}
-        <div className="flex items-center gap-1 p-2 border-b border-zinc-800 bg-zinc-950/30">
+        <div className="flex items-center justify-between gap-3 p-2 border-b border-zinc-800 bg-zinc-950/30">
+          <div className="flex items-center gap-1">
           <button
             onClick={() => setTab("drivers")}
             className={`flex items-center justify-between min-w-[140px] gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-colors ${
@@ -656,7 +703,30 @@ export function StandingsClient({ driverStandings, teamStandings, driverTeamMap,
               {teamStandings.length}
             </span>
           </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleReprocessSeason}
+            disabled={reprocessing}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-500/30 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/15 disabled:opacity-60 disabled:cursor-not-allowed text-xs font-mono"
+          >
+            <RefreshCw size={14} className={reprocessing ? "animate-spin" : ""} />
+            {reprocessing ? "Reprocessando..." : "Reprocessar temporada"}
+          </button>
         </div>
+
+        {reprocessStatus && (
+          <div
+            className={`px-4 py-2 text-xs font-mono border-b ${
+              reprocessStatus.type === "success"
+                ? "text-green-300 bg-green-500/10 border-green-500/20"
+                : "text-red-300 bg-red-500/10 border-red-500/20"
+            }`}
+          >
+            {reprocessStatus.message}
+          </div>
+        )}
 
         <div className="min-h-[420px]">
           {tab === "drivers" ? (

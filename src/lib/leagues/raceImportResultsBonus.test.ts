@@ -24,7 +24,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { importRaceResults } from "@/lib/leagues/raceActions";
 
-const authMock = vi.mocked(auth);
+const authMock = auth as unknown as ReturnType<typeof vi.fn>;
 
 const prismaMock = prisma as unknown as {
   race: {

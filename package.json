@@ -4,9 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:session": "bun run db:sync:pull && bun dev",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "db:sync:pull": "bun scripts/db-sync.ts pull",
+    "db:sync:push": "bun scripts/db-sync.ts push --force",
     "test": "vitest run",
     "test:watch": "vitest"
   },

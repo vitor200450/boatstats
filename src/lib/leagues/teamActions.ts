@@ -4,10 +4,10 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { reprocessSeasonStandings } from "@/lib/leagues/importActions";
 import {
   createTeamSchema,
   updateTeamSchema,
-  assignDriverSchema,
   CreateTeamInput,
   UpdateTeamInput,
 } from "@/lib/validations/leagues";
@@ -47,6 +47,240 @@ function revalidateSeasonPages(
   revalidatePath(`/admin/leagues/${leagueId}/seasons/${seasonId}/drivers`);
   revalidatePath(`/admin/leagues/${leagueId}/seasons/${seasonId}/standings`);
   revalidatePath(`/leagues/${leagueId}`);
+}
+
+type SeasonRoundInfo = {
+  seasonId: string;
+  leagueId: string;
+  rounds: Array<{ id: string; round: number; referenceDate: Date }>;
+};
+
+async function getSeasonRoundInfo(seasonId: string): Promise<SeasonRoundInfo | null> {
+  const seasonRows = await prisma.$queryRaw<
+    Array<{
+      seasonId: string;
+      leagueId: string;
+      raceId: string | null;
+      round: number | null;
+      referenceDate: Date | null;
+    }>
+  >`
+    SELECT
+      s."id" AS "seasonId",
+      s."leagueId" AS "leagueId",
+      r."id" AS "raceId",
+      r."round" AS "round",
+      COALESCE(r."scheduledDate", r."createdAt") AS "referenceDate"
+    FROM "Season" s
+    LEFT JOIN "Race" r ON r."seasonId" = s."id"
+    WHERE s."id" = ${seasonId}
+    ORDER BY r."round" ASC
+  `;
+
+  if (seasonRows.length === 0) return null;
+
+  const rounds = seasonRows
+    .filter((row) => row.raceId && row.round !== null)
+    .map((row) => ({
+      id: row.raceId as string,
+      round: row.round as number,
+      referenceDate: row.referenceDate ?? new Date(),
+    }));
+
+  return {
+    seasonId: seasonRows[0].seasonId,
+    leagueId: seasonRows[0].leagueId,
+    rounds,
+  };
+}
+
+async function resolveEffectiveRound(
+  seasonId: string,
+  requestedRound?: number,
+): Promise<{
+  success: boolean;
+  error?: string;
+  round?: number;
+  referenceDate?: Date;
+  seasonInfo?: SeasonRoundInfo;
+}> {
+  const seasonInfo = await getSeasonRoundInfo(seasonId);
+  if (!seasonInfo) {
+    return { success: false, error: "Temporada não encontrada" };
+  }
+
+  if (seasonInfo.rounds.length === 0) {
+    const fallbackRound = requestedRound ?? 1;
+    return {
+      success: true,
+      round: fallbackRound,
+      referenceDate: new Date(),
+      seasonInfo,
+    };
+  }
+
+  if (requestedRound !== undefined) {
+    const selectedRound = seasonInfo.rounds.find((entry) => entry.round === requestedRound);
+    if (!selectedRound) {
+      return { success: false, error: "Rodada de vigência inválida para esta temporada" };
+    }
+
+    return {
+      success: true,
+      round: selectedRound.round,
+      referenceDate: selectedRound.referenceDate,
+      seasonInfo,
+    };
+  }
+
+  const firstRound = seasonInfo.rounds[0];
+  return {
+    success: true,
+    round: firstRound.round,
+    referenceDate: firstRound.referenceDate,
+    seasonInfo,
+  };
+}
+
+async function upsertTemporalAssignment(params: {
+  seasonId: string;
+  driverId: string;
+  teamId: string | null;
+  effectiveRound: number;
+  effectiveDate: Date;
+}): Promise<void> {
+  const { seasonId, driverId, teamId, effectiveRound, effectiveDate } = params;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      UPDATE "SeasonTeamAssignment"
+      SET "leftAt" = "joinedAt"
+      WHERE "seasonId" = ${seasonId}
+        AND "driverId" = ${driverId}
+        AND "effectiveToRound" IS NOT NULL
+        AND "leftAt" IS NULL
+    `;
+
+    const coveringRows = await tx.$queryRaw<
+      Array<{
+        id: string;
+        effectiveFromRound: number;
+        effectiveToRound: number | null;
+      }>
+    >`
+      SELECT "id", "effectiveFromRound", "effectiveToRound"
+      FROM "SeasonTeamAssignment"
+      WHERE "seasonId" = ${seasonId}
+        AND "driverId" = ${driverId}
+        AND "effectiveFromRound" <= ${effectiveRound}
+        AND ("effectiveToRound" IS NULL OR "effectiveToRound" >= ${effectiveRound})
+      ORDER BY "effectiveFromRound" DESC, "joinedAt" DESC, "id" DESC
+      LIMIT 1
+    `;
+
+    const futureRows = await tx.$queryRaw<
+      Array<{ id: string; effectiveFromRound: number; teamId: string | null }>
+    >`
+      SELECT "id", "effectiveFromRound", "teamId"
+      FROM "SeasonTeamAssignment"
+      WHERE "seasonId" = ${seasonId}
+        AND "driverId" = ${driverId}
+        AND "effectiveFromRound" > ${effectiveRound}
+      ORDER BY "effectiveFromRound" ASC, "joinedAt" DESC, "id" DESC
+    `;
+
+    const rowsToAbsorb = futureRows;
+    const nextRound = null;
+    const newEffectiveToRound = nextRound ? nextRound - 1 : null;
+    const newLeftAt = newEffectiveToRound === null ? null : effectiveDate;
+
+    if (rowsToAbsorb.length > 0) {
+      await tx.$executeRaw`
+        DELETE FROM "SeasonTeamAssignment"
+        WHERE "id" IN (${Prisma.join(rowsToAbsorb.map((row) => row.id))})
+      `;
+    }
+
+    const sameRoundRows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "SeasonTeamAssignment"
+      WHERE "seasonId" = ${seasonId}
+        AND "driverId" = ${driverId}
+        AND "effectiveFromRound" = ${effectiveRound}
+      ORDER BY "joinedAt" DESC, "id" DESC
+      LIMIT 1
+    `;
+
+    if (coveringRows[0] && coveringRows[0].effectiveFromRound < effectiveRound) {
+      await tx.$executeRaw`
+        UPDATE "SeasonTeamAssignment"
+        SET
+          "effectiveToRound" = ${effectiveRound - 1},
+          "leftAt" = ${effectiveDate}
+        WHERE "id" = ${coveringRows[0].id}
+      `;
+    }
+
+    if (sameRoundRows[0]) {
+      await tx.$executeRaw`
+        UPDATE "SeasonTeamAssignment"
+        SET
+          "teamId" = ${teamId},
+          "joinedAt" = ${effectiveDate},
+          "leftAt" = ${newLeftAt},
+          "effectiveToRound" = ${newEffectiveToRound}
+        WHERE "id" = ${sameRoundRows[0].id}
+      `;
+
+      await tx.$executeRaw`
+        DELETE FROM "SeasonTeamAssignment"
+        WHERE "seasonId" = ${seasonId}
+          AND "driverId" = ${driverId}
+          AND "effectiveFromRound" = ${effectiveRound}
+          AND "id" <> ${sameRoundRows[0].id}
+      `;
+
+    } else {
+      try {
+        await tx.$executeRaw`
+          INSERT INTO "SeasonTeamAssignment"
+            ("id", "seasonId", "teamId", "driverId", "joinedAt", "leftAt", "effectiveFromRound", "effectiveToRound")
+          VALUES
+            (${`asg_${seasonId}_${driverId}_${effectiveRound}_${Date.now()}`}, ${seasonId}, ${teamId}, ${driverId}, ${effectiveDate}, ${newLeftAt}, ${effectiveRound}, ${newEffectiveToRound})
+        `;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!message.includes("23505") || !message.includes("seasonId") || !message.includes("driverId")) {
+          throw error;
+        }
+
+        const latestRow = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id"
+          FROM "SeasonTeamAssignment"
+          WHERE "seasonId" = ${seasonId}
+            AND "driverId" = ${driverId}
+          ORDER BY "joinedAt" DESC, "id" DESC
+          LIMIT 1
+        `;
+
+        if (!latestRow[0]) {
+          throw error;
+        }
+
+        await tx.$executeRaw`
+          UPDATE "SeasonTeamAssignment"
+          SET
+            "teamId" = ${teamId},
+            "joinedAt" = ${effectiveDate},
+            "leftAt" = ${newLeftAt},
+            "effectiveFromRound" = ${effectiveRound},
+            "effectiveToRound" = ${newEffectiveToRound}
+          WHERE "id" = ${latestRow[0].id}
+        `;
+      }
+
+    }
+  });
 }
 
 // Create a new team in a league
@@ -629,7 +863,8 @@ export async function deleteTeam(teamId: string) {
 export async function assignDriverToTeam(
   seasonId: string,
   teamId: string | null,
-  driverId: string
+  driverId: string,
+  effectiveRound?: number,
 ) {
   try {
 
@@ -693,51 +928,83 @@ export async function assignDriverToTeam(
       }
     }
 
-    // Check if driver already has an active assignment in this season
-    const existing = await prisma.seasonTeamAssignment.findFirst({
-      where: {
+    const resolvedRound = await resolveEffectiveRound(seasonId, effectiveRound);
+    if (!resolvedRound.success || resolvedRound.round === undefined || !resolvedRound.referenceDate) {
+      return { success: false, error: resolvedRound.error ?? "Rodada de vigência inválida" };
+    }
+
+    try {
+      await upsertTemporalAssignment({
         seasonId,
         driverId: driver.id,
-        leftAt: null,
-      },
-    });
+        teamId,
+        effectiveRound: resolvedRound.round,
+        effectiveDate: resolvedRound.referenceDate,
+      });
+    } catch (assignmentError) {
+      const message = assignmentError instanceof Error ? assignmentError.message : "";
+      const isLegacyUniqueConflict =
+        message.includes("23505") &&
+        message.includes("seasonId") &&
+        message.includes("driverId");
 
-    if (existing) {
-      if (existing.teamId !== teamId) {
-        if (existing.teamId === null && teamId) {
-          await prisma.seasonTeamAssignment.update({
-            where: { id: existing.id },
-            data: { teamId },
-          });
-          revalidateSeasonPages(seasonId, season.league.id);
-          return { success: true };
+      if (!isLegacyUniqueConflict) {
+        throw assignmentError;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const latestRow = await tx.$queryRaw<
+          Array<{ id: string; effectiveFromRound: number }>
+        >`
+          SELECT "id", "effectiveFromRound"
+          FROM "SeasonTeamAssignment"
+          WHERE "seasonId" = ${seasonId}
+            AND "driverId" = ${driver.id}
+          ORDER BY "joinedAt" DESC, "id" DESC
+          LIMIT 1
+        `;
+
+        if (!latestRow[0]) {
+          throw assignmentError;
         }
 
-        // Driver is actively racing for a different team — block the assignment.
-        // Use transferDriver to move between teams intentionally.
-        const currentTeam = existing.teamId
-          ? await prisma.team.findUnique({
-              where: { id: existing.teamId },
-              select: { name: true },
-            })
-          : null;
-        return {
-          success: false,
-          error:
-            existing.teamId === null
-              ? "Piloto já está ativo na temporada sem equipe."
-              : `Piloto já está ativo na equipe "${currentTeam?.name ?? existing.teamId}". Use a transferência para movê-lo entre equipes.`,
-        };
-      }
-      // Already active on the same team — idempotent success, nothing to do
-    } else {
-      await prisma.seasonTeamAssignment.create({
-        data: {
-          seasonId,
-          teamId,
-          driverId: driver.id,
-        } as unknown as Prisma.SeasonTeamAssignmentUncheckedCreateInput,
+        await tx.$executeRaw`
+          UPDATE "SeasonTeamAssignment"
+          SET
+            "teamId" = ${teamId},
+            "joinedAt" = ${resolvedRound.referenceDate},
+            "leftAt" = NULL,
+            "effectiveFromRound" = ${resolvedRound.round},
+            "effectiveToRound" = NULL
+          WHERE "id" = ${latestRow[0].id}
+        `;
+
+        await tx.$executeRaw`
+          UPDATE "SeasonTeamAssignment"
+          SET
+            "leftAt" = COALESCE("leftAt", "joinedAt"),
+            "effectiveToRound" = COALESCE(
+              "effectiveToRound",
+              CASE
+                WHEN "effectiveFromRound" < ${resolvedRound.round}
+                  THEN ${resolvedRound.round - 1}
+                ELSE "effectiveFromRound"
+              END
+            )
+          WHERE "seasonId" = ${seasonId}
+            AND "driverId" = ${driver.id}
+            AND "id" <> ${latestRow[0].id}
+            AND "leftAt" IS NULL
+        `;
       });
+    }
+
+    const reprocessResult = await reprocessSeasonStandings(seasonId, "MANUAL");
+    if (!reprocessResult.success) {
+      return {
+        success: false,
+        error: reprocessResult.error ?? "Erro ao reprocessar classificação da temporada",
+      };
     }
 
     revalidateSeasonPages(seasonId, season.league.id);
@@ -755,8 +1022,9 @@ export async function assignDriverToTeam(
 export async function assignDriverWithoutTeam(
   seasonId: string,
   driverId: string,
+  effectiveRound?: number,
 ) {
-  return assignDriverToTeam(seasonId, null, driverId);
+  return assignDriverToTeam(seasonId, null, driverId, effectiveRound);
 }
 
 // Search for drivers by UUID or name
@@ -789,7 +1057,10 @@ export async function searchDrivers(query: string) {
 }
 
 // Remove driver from team (mark as left)
-export async function removeDriverFromTeam(assignmentId: string) {
+export async function removeDriverFromTeam(
+  assignmentId: string,
+  effectiveRound?: number,
+) {
   try {
 
     const assignment = await prisma.seasonTeamAssignment.findUnique({
@@ -828,10 +1099,32 @@ export async function removeDriverFromTeam(assignmentId: string) {
       return { success: false, error: "Acesso negado" };
     }
 
-    await prisma.seasonTeamAssignment.update({
-      where: { id: assignmentId },
-      data: { leftAt: new Date() },
+    const resolvedRound = await resolveEffectiveRound(
+      assignment.seasonId,
+      effectiveRound,
+    );
+    if (!resolvedRound.success || resolvedRound.round === undefined || !resolvedRound.referenceDate) {
+      return { success: false, error: resolvedRound.error ?? "Rodada de vigência inválida" };
+    }
+
+    await upsertTemporalAssignment({
+      seasonId: assignment.seasonId,
+      driverId: assignment.driverId,
+      teamId: null,
+      effectiveRound: resolvedRound.round,
+      effectiveDate: resolvedRound.referenceDate,
     });
+
+    const reprocessResult = await reprocessSeasonStandings(
+      assignment.seasonId,
+      "REMOVE_DRIVER",
+    );
+    if (!reprocessResult.success) {
+      return {
+        success: false,
+        error: reprocessResult.error ?? "Erro ao reprocessar classificação da temporada",
+      };
+    }
 
     revalidateSeasonPages(
       assignment.seasonId,
@@ -852,7 +1145,8 @@ export async function removeDriverFromTeam(assignmentId: string) {
 export async function transferDriver(
   seasonId: string,
   driverId: string,
-  newTeamId: string
+  newTeamId: string | null,
+  effectiveRound?: number,
 ) {
   try {
 
@@ -897,20 +1191,37 @@ export async function transferDriver(
       return { success: false, error: "Acesso negado" };
     }
 
-    // Close current assignment
-    await prisma.seasonTeamAssignment.update({
-      where: { id: currentAssignment.id },
-      data: { leftAt: new Date() },
+    if (newTeamId) {
+      const targetTeam = await prisma.team.findUnique({
+        where: { id: newTeamId },
+        select: { id: true, leagueId: true },
+      });
+
+      if (!targetTeam || targetTeam.leagueId !== currentAssignment.season.league.id) {
+        return { success: false, error: "Equipe de destino inválida para esta temporada" };
+      }
+    }
+
+    const resolvedRound = await resolveEffectiveRound(seasonId, effectiveRound);
+    if (!resolvedRound.success || resolvedRound.round === undefined || !resolvedRound.referenceDate) {
+      return { success: false, error: resolvedRound.error ?? "Rodada de vigência inválida" };
+    }
+
+    await upsertTemporalAssignment({
+      seasonId,
+      driverId,
+      teamId: newTeamId,
+      effectiveRound: resolvedRound.round,
+      effectiveDate: resolvedRound.referenceDate,
     });
 
-    // Create new assignment
-    await prisma.seasonTeamAssignment.create({
-      data: {
-        seasonId,
-        teamId: newTeamId,
-        driverId,
-      },
-    });
+    const reprocessResult = await reprocessSeasonStandings(seasonId, "TRANSFER");
+    if (!reprocessResult.success) {
+      return {
+        success: false,
+        error: reprocessResult.error ?? "Erro ao reprocessar classificação da temporada",
+      };
+    }
 
     const leagueId = currentAssignment.season.league.id;
     revalidateSeasonPages(seasonId, leagueId);

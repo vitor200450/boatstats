@@ -31,6 +31,34 @@ import {
 import {
   FrosthexEventResultResponse,
 } from "@/services/frosthexAPI";
+import {
+  reprocessSeasonStandingsWithLock,
+  type SeasonReprocessReason,
+} from "./reprocessStandings";
+import { normalizeLegacyAssignmentRoundsForSeason } from "./assignmentNormalization";
+
+export async function reprocessSeasonStandings(
+  seasonId: string,
+  reason: SeasonReprocessReason = "MANUAL",
+  deps?: {
+    calculateStandingsFn?: (seasonId: string) => Promise<{ success: boolean; error?: string }>;
+  },
+): Promise<{ success: boolean; error?: string; durationMs?: number; reason?: SeasonReprocessReason }> {
+  if (!deps?.calculateStandingsFn) {
+    const normalization = await normalizeLegacyAssignmentRoundsForSeason(seasonId);
+    if (normalization.updatedCount > 0) {
+      console.info(
+        `[LegacyAssignments] Backfilled ${normalization.updatedCount} drivers to round ${normalization.firstSeasonRound} before reprocess season=${seasonId}`,
+      );
+    }
+  }
+
+  const calculateStandingsFn = deps?.calculateStandingsFn ?? calculateStandings;
+  return reprocessSeasonStandingsWithLock(seasonId, reason, {
+    calculateStandingsFn,
+    logger: console,
+  });
+}
 
 // Fetch event from Frosthex API
 async function fetchEventFromAPI(
@@ -153,7 +181,8 @@ export async function importRoundResults(roundId: string) {
     prismaClient: prisma,
     authFn: auth,
     revalidateFn: revalidatePath,
-    calculateStandingsFn: calculateStandings,
+    calculateStandingsFn: (seasonId: string) =>
+      reprocessSeasonStandings(seasonId, "ROUND_IMPORT"),
   });
 }
 
@@ -634,11 +663,35 @@ export async function calculateStandings(seasonId: string) {
     const teamScoringConfig = getTeamScoringConfig(seasonPointsSystem);
 
     const depthChartEntries = await prisma.$queryRaw<
-      Array<{ seasonId: string; teamId: string; driverId: string; priority: number }>
+      Array<{
+        seasonId: string;
+        teamId: string;
+        driverId: string;
+        priority: number;
+        effectiveFromRound: number;
+        effectiveToRound: number | null;
+      }>
     >`
-      SELECT "seasonId", "teamId", "driverId", "priority"
+      SELECT "seasonId", "teamId", "driverId", "priority", "effectiveFromRound", "effectiveToRound"
       FROM "SeasonTeamDepthChartEntry"
       WHERE "seasonId" = ${seasonId}
+    `;
+
+    const temporalAssignments = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        teamId: string | null;
+        driverId: string;
+        joinedAt: Date;
+        leftAt: Date | null;
+        effectiveFromRound: number;
+        effectiveToRound: number | null;
+      }>
+    >`
+      SELECT "id", "teamId", "driverId", "joinedAt", "leftAt", "effectiveFromRound", "effectiveToRound"
+      FROM "SeasonTeamAssignment"
+      WHERE "seasonId" = ${seasonId}
+      ORDER BY "driverId" ASC, "effectiveFromRound" ASC, "joinedAt" ASC, "id" ASC
     `;
 
     const slotRosterEntries =
@@ -675,14 +728,17 @@ export async function calculateStandings(seasonId: string) {
       raceBonusesByRaceId.set(bonus.raceId, existing);
     }
 
-    const teamAssignmentsForScoring = season.teamAssignments.flatMap((assignment) =>
+    const teamAssignmentsForScoring = temporalAssignments.flatMap((assignment) =>
       assignment.teamId
         ? [
             {
+              id: assignment.id,
               teamId: assignment.teamId,
               driverId: assignment.driverId,
               joinedAt: assignment.joinedAt,
               leftAt: assignment.leftAt,
+              effectiveFromRound: assignment.effectiveFromRound,
+              effectiveToRound: assignment.effectiveToRound,
             },
           ]
         : [],
@@ -1067,7 +1123,13 @@ export async function recalculatePoints(seasonId: string) {
     }
 
     // Recalculate standings
-    await calculateStandings(seasonId);
+    const standingsResult = await reprocessSeasonStandings(
+      seasonId,
+      "POINTS_RECALC",
+    );
+    if (!standingsResult.success) {
+      return standingsResult;
+    }
 
     revalidatePath(
       `/admin/leagues/${season.league.id}/seasons/${seasonId}/standings`
@@ -1123,7 +1185,7 @@ export async function recalculateStandings(seasonId: string) {
       return { success: false, error: "Acesso negado" };
     }
 
-    const standingsResult = await calculateStandings(seasonId);
+    const standingsResult = await reprocessSeasonStandings(seasonId, "MANUAL");
     if (!standingsResult.success) {
       return standingsResult;
     }

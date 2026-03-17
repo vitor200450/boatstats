@@ -40,3 +40,22 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 - Vercel setup guide: `docs/vercel-deployment.md`
 - Production database strategy: `docs/production-database-design.md`
 - Database runbook: `docs/production-database-runbook.md`
+
+## Sincronizacao de banco (dev <-> producao)
+
+Configure no `.env`:
+
+```bash
+LOCAL_DATABASE_URL="postgresql://..."        # Aiven/local
+PRODUCTION_DATABASE_URL="postgresql://..."   # Railway/producao
+```
+
+Comandos:
+
+- `bun run db:sync:pull`: copia dados de producao para local
+- `bun run db:sync:push`: copia dados de local para producao (usa `--force`)
+- `bun run dev:session`: sincroniza producao -> local e inicia `bun dev`
+
+Requisitos:
+
+- `pg_dump` e `pg_restore` disponiveis no PATH (PostgreSQL client tools)

@@ -35,6 +35,7 @@ describe("team scoring regression snapshots", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-01-01"),
           scheduledDate: new Date("2026-01-01"),
           eventRounds: [
@@ -106,6 +107,7 @@ describe("team scoring regression snapshots", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-01-01"),
           scheduledDate: new Date("2026-01-01"),
           eventRounds: [
@@ -194,6 +196,7 @@ describe("team scoring regression snapshots", () => {
       races: [
         {
           id: "r1",
+          round: 1,
           createdAt: new Date("2026-01-01"),
           scheduledDate: new Date("2026-01-01"),
           eventRounds: [
@@ -221,6 +224,7 @@ describe("team scoring regression snapshots", () => {
         },
         {
           id: "r2",
+          round: 2,
           createdAt: new Date("2026-01-08"),
           scheduledDate: new Date("2026-01-08"),
           eventRounds: [

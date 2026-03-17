@@ -335,7 +335,7 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
       Array<{ name: string; uuid: string | null; points: number }>
     > = {};
     for (const [raceId, driverIds] of Object.entries(byRace)) {
-      raceMap[raceId] = driverIds
+      const contributors = driverIds
         .map((driverId) => {
           const meta = driverMetaById.get(driverId) ?? {
             name: driverId,
@@ -345,8 +345,12 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
             ...meta,
             points: driverPointsByRaceId[raceId]?.[driverId] ?? 0,
           };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name));
+        });
+
+      raceMap[raceId] =
+        teamConfig.mode === "DEPTH_CHART"
+          ? contributors
+          : contributors.sort((a, b) => a.name.localeCompare(b.name));
     }
     teamRaceContributors[teamId] = raceMap;
   }
@@ -390,6 +394,7 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
       </div>
 
       <StandingsClient
+        seasonId={seasonId}
         driverStandings={driverStandings}
         teamStandings={teamStandings}
         driverTeamMap={driverTeamMap}

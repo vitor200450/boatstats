@@ -24,8 +24,8 @@ import {
   importTeamToLeague,
 } from "@/lib/leagues/teamActions";
 
-const authMock = vi.mocked(auth);
-const revalidatePathMock = vi.mocked(revalidatePath);
+const authMock = auth as unknown as ReturnType<typeof vi.fn>;
+const revalidatePathMock = revalidatePath as unknown as ReturnType<typeof vi.fn>;
 
 const prismaMock = prisma as unknown as {
   league: {

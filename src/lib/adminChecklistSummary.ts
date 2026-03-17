@@ -81,6 +81,7 @@ function buildFallbackSteps(): ChecklistStepSummary[] {
 }
 
 export async function getAdminChecklistSummary(): Promise<AdminChecklistSummary> {
+  try {
   const leaguesResult = await getMyLeagues();
   const leagues = leaguesResult.success && leaguesResult.data ? leaguesResult.data : [];
   const primaryLeague = leagues[0] ?? null;
@@ -232,4 +233,18 @@ export async function getAdminChecklistSummary(): Promise<AdminChecklistSummary>
     showCompletedSeasonView: hasCompletedOrArchivedSeason && !hasOpenSeason,
     checklistLeagueId,
   };
+  } catch (error) {
+    console.error("Error building admin checklist summary:", error);
+
+    const steps = buildFallbackSteps();
+    const primaryStep = steps[0];
+    return {
+      completedCount: 0,
+      totalCount: steps.length,
+      primaryStep,
+      secondarySteps: steps.slice(1, 3),
+      showCompletedSeasonView: false,
+      checklistLeagueId: null,
+    };
+  }
 }

@@ -73,6 +73,7 @@ export {
   detectRounds,
   importRoundResults,
   calculateStandings,
+  reprocessSeasonStandings,
   recalculateStandings,
   getStandings,
   recalculatePoints,

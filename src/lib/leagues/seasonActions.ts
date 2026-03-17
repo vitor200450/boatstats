@@ -11,7 +11,8 @@ import {
   UpdateSeasonInput,
 } from "@/lib/validations/leagues";
 import { F1_SPRINT_POINTS } from "@/lib/leagues/pointsSystem";
-import { calculateStandings } from "@/lib/leagues/importActions";
+import { reprocessSeasonStandings } from "@/lib/leagues/importActions";
+import { normalizeLegacyAssignmentRoundsForSeason } from "@/lib/leagues/assignmentNormalization";
 
 function getSeasonTeamScoringMode(pointsSystem: unknown):
   | "STANDARD"
@@ -59,6 +60,52 @@ async function checkLeagueAccess(leagueId: string) {
   }
 
   return { user, hasAccess: true };
+}
+
+async function resolveSeasonEffectiveRound(
+  seasonId: string,
+  requestedRound?: number,
+): Promise<
+  | { success: true; round: number; referenceDate: Date }
+  | { success: false; error: string }
+> {
+  const rounds = await prisma.race.findMany({
+    where: { seasonId },
+    select: {
+      round: true,
+      scheduledDate: true,
+      createdAt: true,
+    },
+    orderBy: { round: "asc" },
+  });
+
+  if (rounds.length === 0) {
+    return {
+      success: true,
+      round: requestedRound ?? 1,
+      referenceDate: new Date(),
+    };
+  }
+
+  if (requestedRound !== undefined) {
+    const selected = rounds.find((race) => race.round === requestedRound);
+    if (!selected) {
+      return { success: false, error: "Rodada de vigência inválida" };
+    }
+
+    return {
+      success: true,
+      round: selected.round,
+      referenceDate: selected.scheduledDate ?? selected.createdAt,
+    };
+  }
+
+  const firstRound = rounds[0];
+  return {
+    success: true,
+    round: firstRound.round,
+    referenceDate: firstRound.scheduledDate ?? firstRound.createdAt,
+  };
 }
 
 // Create a new season for a league
@@ -179,12 +226,18 @@ export async function cloneSeasonForTesting(seasonId: string) {
     }
 
     const depthChartEntries = await prisma.$queryRaw<
-      Array<{ teamId: string; driverId: string; priority: number }>
+      Array<{
+        teamId: string;
+        driverId: string;
+        priority: number;
+        effectiveFromRound: number;
+        effectiveToRound: number | null;
+      }>
     >`
-      SELECT "teamId", "driverId", "priority"
+      SELECT "teamId", "driverId", "priority", "effectiveFromRound", "effectiveToRound"
       FROM "SeasonTeamDepthChartEntry"
       WHERE "seasonId" = ${seasonId}
-      ORDER BY "teamId" ASC, "priority" ASC
+      ORDER BY "teamId" ASC, "effectiveFromRound" ASC, "priority" ASC
     `;
 
     const sourceRosters = await prisma.$queryRaw<
@@ -228,21 +281,27 @@ export async function cloneSeasonForTesting(seasonId: string) {
       if (sourceSeason.teamAssignments.length > 0) {
         await prisma.seasonTeamAssignment.createMany({
           data: sourceSeason.teamAssignments.map((assignment) => ({
-            seasonId: clonedSeasonId,
-            teamId: assignment.teamId,
-            driverId: assignment.driverId,
-            joinedAt: assignment.joinedAt,
-            leftAt: assignment.leftAt,
-          })),
-        });
-      }
+              seasonId: clonedSeasonId,
+              teamId: assignment.teamId,
+              driverId: assignment.driverId,
+              joinedAt: assignment.joinedAt,
+              leftAt: assignment.leftAt,
+              effectiveFromRound:
+                (assignment as unknown as { effectiveFromRound?: number })
+                  .effectiveFromRound ?? 1,
+              effectiveToRound:
+                (assignment as unknown as { effectiveToRound?: number | null })
+                  .effectiveToRound ?? null,
+            })),
+          });
+        }
 
       if (depthChartEntries.length > 0) {
         for (const entry of depthChartEntries) {
           await prisma.$executeRaw`
             INSERT INTO "SeasonTeamDepthChartEntry"
-            ("seasonId", "teamId", "driverId", "priority", "createdAt", "updatedAt")
-            VALUES (${clonedSeasonId}, ${entry.teamId}, ${entry.driverId}, ${entry.priority}, NOW(), NOW())
+            ("seasonId", "teamId", "driverId", "priority", "effectiveFromRound", "effectiveToRound", "createdAt", "updatedAt")
+            VALUES (${clonedSeasonId}, ${entry.teamId}, ${entry.driverId}, ${entry.priority}, ${entry.effectiveFromRound}, ${entry.effectiveToRound}, NOW(), NOW())
           `;
         }
       }
@@ -346,7 +405,13 @@ export async function cloneSeasonForTesting(seasonId: string) {
       return { success: false, error: "Falha ao criar cópia da temporada" };
     }
 
-    await calculateStandings(clonedSeason.id);
+    const reprocessResult = await reprocessSeasonStandings(clonedSeason.id, "MANUAL");
+    if (!reprocessResult.success) {
+      return {
+        success: false,
+        error: reprocessResult.error ?? "Erro ao reprocessar classificação da temporada clonada",
+      };
+    }
 
     revalidatePath(`/admin/leagues/${sourceSeason.league.id}/seasons`);
     revalidatePath(`/admin/leagues/${sourceSeason.league.id}/seasons/${seasonId}`);
@@ -466,6 +531,13 @@ export async function getSeasonById(seasonId: string) {
       return { success: false, error: "Temporada não encontrada" };
     }
 
+    const normalization = await normalizeLegacyAssignmentRoundsForSeason(seasonId);
+    if (normalization.updatedCount > 0) {
+      console.info(
+        `[LegacyAssignments] Backfilled ${normalization.updatedCount} drivers to round ${normalization.firstSeasonRound} in season ${seasonId}`,
+      );
+    }
+
     // Check access
     const session = await auth();
     if (!session?.user) {
@@ -522,6 +594,13 @@ export async function updateSeason(seasonId: string, data: UpdateSeasonInput) {
 
     if (!season) {
       return { success: false, error: "Temporada não encontrada" };
+    }
+
+    const normalization = await normalizeLegacyAssignmentRoundsForSeason(seasonId);
+    if (normalization.updatedCount > 0) {
+      console.info(
+        `[LegacyAssignments] Backfilled ${normalization.updatedCount} drivers to round ${normalization.firstSeasonRound} in season ${seasonId}`,
+      );
     }
 
     const session = await auth();
@@ -863,6 +942,15 @@ export async function getSeasonDrivers(seasonId: string) {
     const season = await prisma.season.findUnique({
       where: { id: seasonId },
       include: {
+        races: {
+          select: {
+            id: true,
+            round: true,
+            name: true,
+            status: true,
+          },
+          orderBy: { round: "asc" },
+        },
         league: {
           select: {
             id: true,
@@ -906,17 +994,126 @@ export async function getSeasonDrivers(seasonId: string) {
       return { success: false, error: "Acesso negado" };
     }
 
-    // Group assignments by team
+    const referenceRound =
+      season.status === "COMPLETED" || season.status === "ARCHIVED"
+        ? (season.races[season.races.length - 1]?.round ?? 1)
+        : (() => {
+            const completedRounds = season.races
+              .filter((race) => race.status === "COMPLETED")
+              .map((race) => race.round);
+
+            if (completedRounds.length > 0) {
+              return Math.max(...completedRounds);
+            }
+
+            return season.races[0]?.round ?? 1;
+          })();
+
+    const activeAssignmentsAtReferenceRound = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        seasonId: string;
+        teamId: string | null;
+        driverId: string;
+        joinedAt: Date;
+        leftAt: Date | null;
+        effectiveFromRound: number;
+        effectiveToRound: number | null;
+        driverCurrentName: string | null;
+        driverUuid: string;
+        driverColorCode: string | null;
+        driverBoatType: string | null;
+        driverBoatMaterial: string | null;
+        driverPreviousNames: string[];
+        driverCreatedAt: Date;
+        driverUpdatedAt: Date;
+      }>
+    >`
+      WITH ranked_assignments AS (
+        SELECT
+          a."id",
+          a."seasonId",
+          a."teamId",
+          a."driverId",
+          a."joinedAt",
+          a."leftAt",
+          COALESCE(a."effectiveFromRound", 1) AS "effectiveFromRound",
+          a."effectiveToRound",
+          ROW_NUMBER() OVER (
+            PARTITION BY a."driverId"
+            ORDER BY
+              COALESCE(a."effectiveFromRound", 1) DESC,
+              (a."teamId" IS NULL) ASC,
+              a."joinedAt" DESC,
+              a."id" DESC
+          ) AS rn
+        FROM "SeasonTeamAssignment" a
+        WHERE a."seasonId" = ${seasonId}
+          AND COALESCE(a."effectiveFromRound", 1) <= ${referenceRound}
+          AND (a."effectiveToRound" IS NULL OR a."effectiveToRound" >= ${referenceRound})
+      )
+      SELECT
+        ra."id",
+        ra."seasonId",
+        ra."teamId",
+        ra."driverId",
+        ra."joinedAt",
+        ra."leftAt",
+        ra."effectiveFromRound",
+        ra."effectiveToRound",
+        d."currentName" AS "driverCurrentName",
+        d."uuid" AS "driverUuid",
+        d."colorCode" AS "driverColorCode",
+        d."boatType" AS "driverBoatType",
+        d."boatMaterial" AS "driverBoatMaterial",
+        d."previousNames" AS "driverPreviousNames",
+        d."createdAt" AS "driverCreatedAt",
+        d."updatedAt" AS "driverUpdatedAt"
+      FROM ranked_assignments ra
+      INNER JOIN "Driver" d ON d."id" = ra."driverId"
+      WHERE ra.rn = 1
+    `;
+
+    const normalizedActiveAssignments = activeAssignmentsAtReferenceRound.map(
+      (assignment) => ({
+        id: assignment.id,
+        seasonId: assignment.seasonId,
+        teamId: assignment.teamId,
+        driverId: assignment.driverId,
+        joinedAt: assignment.joinedAt,
+        leftAt: assignment.leftAt,
+        effectiveFromRound: assignment.effectiveFromRound,
+        effectiveToRound: assignment.effectiveToRound,
+        driver: {
+          id: assignment.driverId,
+          currentName: assignment.driverCurrentName,
+          uuid: assignment.driverUuid,
+          colorCode: assignment.driverColorCode,
+          boatType: assignment.driverBoatType,
+          boatMaterial: assignment.driverBoatMaterial,
+          previousNames: assignment.driverPreviousNames,
+          createdAt: assignment.driverCreatedAt,
+          updatedAt: assignment.driverUpdatedAt,
+        },
+      }),
+    );
+
+    const activeAssignmentsByTeamId = new Map<string, typeof normalizedActiveAssignments>();
+    for (const assignment of normalizedActiveAssignments) {
+      if (!assignment.teamId) continue;
+      const list = activeAssignmentsByTeamId.get(assignment.teamId) ?? [];
+      list.push(assignment);
+      activeAssignmentsByTeamId.set(assignment.teamId, list);
+    }
+
     const teamsWithDrivers = season.league.teams.map((team) => ({
       ...team,
-      activeAssignments: team.assignments.filter((a) => !a.leftAt),
+      activeAssignments: activeAssignmentsByTeamId.get(team.id) ?? [],
     }));
 
     // Find drivers who participated in this season's races but have no team assignment
     const assignedDriverIds = new Set(
-      season.league.teams.flatMap((t) =>
-        t.assignments.filter((a) => !a.leftAt).map((a) => a.driverId)
-      )
+      teamsWithDrivers.flatMap((team) => team.activeAssignments.map((assignment) => assignment.driverId)),
     );
 
     const teamlessDriversFromRaceResults = await prisma.driver.findMany({
@@ -933,36 +1130,9 @@ export async function getSeasonDrivers(seasonId: string) {
       orderBy: { currentName: "asc" },
     });
 
-    const teamlessAssignments = await prisma.$queryRaw<
-      Array<{
-        id: string;
-        uuid: string;
-        currentName: string | null;
-        colorCode: string | null;
-        boatType: string | null;
-        boatMaterial: string | null;
-        previousNames: string[];
-        createdAt: Date;
-        updatedAt: Date;
-      }>
-    >`
-      SELECT
-        d."id",
-        d."uuid",
-        d."currentName",
-        d."colorCode",
-        d."boatType",
-        d."boatMaterial",
-        d."previousNames",
-        d."createdAt",
-        d."updatedAt"
-      FROM "SeasonTeamAssignment" a
-      INNER JOIN "Driver" d ON d."id" = a."driverId"
-      WHERE a."seasonId" = ${seasonId}
-        AND a."teamId" IS NULL
-        AND a."leftAt" IS NULL
-      ORDER BY d."currentName" ASC, d."uuid" ASC
-    `;
+    const teamlessAssignments = normalizedActiveAssignments
+      .filter((assignment) => assignment.teamId === null)
+      .map((assignment) => assignment.driver);
 
     const teamlessDriverMap = new Map<string, (typeof teamlessDriversFromRaceResults)[number]>();
     for (const driver of teamlessDriversFromRaceResults) {
@@ -996,19 +1166,72 @@ export async function getSeasonDrivers(seasonId: string) {
     );
 
     const depthChartEntries = await prisma.$queryRaw<
-      Array<{ teamId: string; driverId: string; priority: number }>
+      Array<{
+        teamId: string;
+        driverId: string;
+        priority: number;
+        effectiveFromRound: number;
+        effectiveToRound: number | null;
+      }>
     >`
-      SELECT "teamId", "driverId", "priority"
+      SELECT "teamId", "driverId", "priority", "effectiveFromRound", "effectiveToRound"
       FROM "SeasonTeamDepthChartEntry"
       WHERE "seasonId" = ${seasonId}
+      ORDER BY "teamId" ASC, "effectiveFromRound" DESC, "priority" ASC, "updatedAt" DESC
     `;
 
-    const depthPriorityByTeamDriver = new Map(
-      depthChartEntries.map((entry) => [
-        `${entry.teamId}:${entry.driverId}`,
-        entry.priority,
-      ]),
+    const latestDepthChartByTeam = await prisma.$queryRaw<
+      Array<{
+        teamId: string;
+        updatedAt: Date;
+        effectiveFromRound: number;
+        raceName: string | null;
+      }>
+    >`
+      WITH latest_team_depth_chart AS (
+        SELECT
+          e."teamId" AS "teamId",
+          e."updatedAt" AS "updatedAt",
+          e."effectiveFromRound" AS "effectiveFromRound",
+          ROW_NUMBER() OVER (
+            PARTITION BY e."teamId"
+            ORDER BY e."effectiveFromRound" DESC, e."updatedAt" DESC, e."id" DESC
+          ) AS rn
+        FROM "SeasonTeamDepthChartEntry" e
+        WHERE e."seasonId" = ${seasonId}
+      )
+      SELECT
+        l."teamId",
+        l."updatedAt",
+        l."effectiveFromRound",
+        r."name" AS "raceName"
+      FROM latest_team_depth_chart l
+      LEFT JOIN "Race" r
+        ON r."seasonId" = ${seasonId}
+       AND r."round" = l."effectiveFromRound"
+      WHERE l.rn = 1
+    `;
+
+    const depthChartMetaByTeamId = new Map(
+      latestDepthChartByTeam.map((entry) =>
+        [
+          entry.teamId,
+          {
+            updatedAt: entry.updatedAt,
+            round: entry.effectiveFromRound,
+            raceName: entry.raceName,
+          },
+        ] as const,
+      ),
     );
+
+    const depthPriorityByTeamDriver = new Map<string, number>();
+    for (const entry of depthChartEntries) {
+      const key = `${entry.teamId}:${entry.driverId}`;
+      if (depthPriorityByTeamDriver.has(key)) continue;
+      if (entry.effectiveToRound !== null) continue;
+      depthPriorityByTeamDriver.set(key, entry.priority);
+    }
 
     const teamStandings = await prisma.standing.findMany({
       where: {
@@ -1032,6 +1255,9 @@ export async function getSeasonDrivers(seasonId: string) {
     const teamsWithDriverPoints = teamsWithDrivers.map((team) => ({
       ...team,
       teamSeasonPoints: teamPointsByTeamId.get(team.id),
+      lastDepthChartUpdatedAt: depthChartMetaByTeamId.get(team.id)?.updatedAt ?? null,
+      lastDepthChartRound: depthChartMetaByTeamId.get(team.id)?.round ?? null,
+      lastDepthChartRaceName: depthChartMetaByTeamId.get(team.id)?.raceName ?? null,
       activeAssignments: team.activeAssignments.map((assignment) => ({
         ...assignment,
         driver: {
@@ -1060,6 +1286,7 @@ export async function getSeasonDrivers(seasonId: string) {
           leagueId: season.league.id,
           leagueName: season.league.name,
           teamScoringMode: getSeasonTeamScoringMode(season.pointsSystem),
+          rounds: season.races,
         },
         teams: teamsWithDriverPoints,
         teamlessDrivers: teamlessDriversWithPoints,
@@ -1087,6 +1314,7 @@ export async function saveTeamDepthChart(
   seasonId: string,
   teamId: string,
   driverIdsInPriorityOrder: string[],
+  effectiveRound?: number,
 ) {
   try {
 
@@ -1131,43 +1359,168 @@ export async function saveTeamDepthChart(
       return { success: false, error: "Acesso negado" };
     }
 
-    const activeAssignments = await prisma.seasonTeamAssignment.findMany({
-      where: {
-        seasonId,
-        teamId,
-        leftAt: null,
-      },
-      select: { driverId: true },
-    });
+    const resolvedRound = await resolveSeasonEffectiveRound(seasonId, effectiveRound);
+    if (!resolvedRound.success) {
+      return { success: false, error: resolvedRound.error };
+    }
 
-    const activeDriverIds = new Set(activeAssignments.map((a) => a.driverId));
-    for (const driverId of driverIdsInPriorityOrder) {
-      if (!activeDriverIds.has(driverId)) {
+    const activeAssignments = await prisma.$queryRaw<
+      Array<{ driverId: string }>
+    >`
+      WITH active_assignments AS (
+        SELECT
+          "id",
+          "driverId",
+          "teamId",
+          "joinedAt"
+        FROM "SeasonTeamAssignment"
+        WHERE "seasonId" = ${seasonId}
+          AND COALESCE("effectiveFromRound", 1) <= ${resolvedRound.round}
+          AND ("effectiveToRound" IS NULL OR "effectiveToRound" >= ${resolvedRound.round})
+      ),
+      latest_assignments AS (
+        SELECT
+          aa."driverId",
+          aa."teamId",
+          ROW_NUMBER() OVER (
+            PARTITION BY aa."driverId"
+            ORDER BY (aa."teamId" IS NULL) ASC, aa."joinedAt" DESC, aa."id" DESC
+          ) AS rn
+        FROM active_assignments aa
+      )
+      SELECT "driverId"
+      FROM latest_assignments
+      WHERE rn = 1
+        AND "teamId" = ${teamId}
+    `;
+
+    let activeDriverIds = new Set(activeAssignments.map((a) => a.driverId));
+    if (activeDriverIds.size === 0) {
+      const currentAssignments = await prisma.$queryRaw<Array<{ driverId: string }>>`
+        WITH latest_assignments AS (
+          SELECT
+            a."driverId",
+            a."teamId",
+            ROW_NUMBER() OVER (
+              PARTITION BY a."driverId"
+              ORDER BY (a."teamId" IS NULL) ASC, a."joinedAt" DESC, a."id" DESC
+            ) AS rn
+          FROM "SeasonTeamAssignment" a
+          WHERE a."seasonId" = ${seasonId}
+        )
+        SELECT "driverId"
+        FROM latest_assignments
+        WHERE rn = 1
+          AND "teamId" = ${teamId}
+      `;
+
+      activeDriverIds = new Set(currentAssignments.map((a) => a.driverId));
+
+      if (activeDriverIds.size === 0) {
         return {
           success: false,
-          error: "Lista contém piloto que não está ativo nesta equipe",
+          error: `Esta equipe ainda não possui pilotos vinculados para salvar depth chart na rodada ${resolvedRound.round}.`,
         };
       }
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        DELETE FROM "SeasonTeamDepthChartEntry"
-        WHERE "seasonId" = ${seasonId} AND "teamId" = ${teamId}
+    const eligibleDriverIds = driverIdsInPriorityOrder.filter((driverId) =>
+      activeDriverIds.has(driverId),
+    );
+
+    if (eligibleDriverIds.length === 0) {
+      return {
+        success: false,
+        error: `Nenhum dos pilotos informados está ativo na equipe na rodada ${resolvedRound.round}.`,
+      };
+    }
+
+    const inactiveDriverIds = driverIdsInPriorityOrder.filter(
+      (driverId) => !activeDriverIds.has(driverId),
+    );
+    if (inactiveDriverIds.length > 0) {
+      const inactiveDrivers = await prisma.driver.findMany({
+        where: { id: { in: inactiveDriverIds } },
+        select: { id: true, currentName: true, uuid: true },
+      });
+
+      const inactiveDriverFirstRoundRows = await prisma.$queryRaw<
+        Array<{ driverId: string; firstRound: number | null }>
+      >`
+        SELECT
+          "driverId",
+          MIN(COALESCE("effectiveFromRound", 1))::int AS "firstRound"
+        FROM "SeasonTeamAssignment"
+        WHERE "seasonId" = ${seasonId}
+          AND "teamId" = ${teamId}
+          AND "driverId" IN (${Prisma.join(inactiveDriverIds)})
+        GROUP BY "driverId"
       `;
 
-      const values = driverIdsInPriorityOrder.map((driverId, index) =>
-        Prisma.sql`(${`dc_${seasonId}_${teamId}_${driverId}_${index + 1}`}, ${seasonId}, ${teamId}, ${driverId}, ${index + 1}, NOW(), NOW())`,
+      const labelByDriverId = new Map(
+        inactiveDrivers.map((driver) => [
+          driver.id,
+          driver.currentName || driver.uuid.slice(0, 8),
+        ] as const),
       );
+
+      const firstRoundByDriverId = new Map(
+        inactiveDriverFirstRoundRows.map((row) => [row.driverId, row.firstRound] as const),
+      );
+
+      const labels = inactiveDriverIds.map(
+        (driverId) => {
+          const name = labelByDriverId.get(driverId) || driverId;
+          const firstRound = firstRoundByDriverId.get(driverId);
+          return firstRound ? `${name} (desde rodada ${firstRound})` : name;
+        },
+      );
+
+      console.info(
+        `[DepthChart] Ignorando pilotos fora da equipe na rodada ${resolvedRound.round} (season=${seasonId} team=${teamId}): ${labels.join(", ")}`,
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        UPDATE "SeasonTeamDepthChartEntry"
+        SET "effectiveToRound" = ${resolvedRound.round - 1}, "updatedAt" = NOW()
+        WHERE "seasonId" = ${seasonId}
+          AND "teamId" = ${teamId}
+          AND "effectiveFromRound" < ${resolvedRound.round}
+          AND ("effectiveToRound" IS NULL OR "effectiveToRound" >= ${resolvedRound.round})
+      `;
+
+      const values = eligibleDriverIds.map((driverId, index) =>
+        Prisma.sql`(${`dc_${seasonId}_${teamId}_${driverId}_${resolvedRound.round}_${index + 1}_${Date.now()}`}, ${seasonId}, ${teamId}, ${driverId}, ${index + 1}, ${resolvedRound.round}, NULL, NOW(), NOW())`,
+      );
+
+      await tx.$executeRaw`
+        DELETE FROM "SeasonTeamDepthChartEntry"
+        WHERE "seasonId" = ${seasonId}
+          AND "teamId" = ${teamId}
+          AND "effectiveFromRound" = ${resolvedRound.round}
+      `;
 
       if (values.length > 0) {
         await tx.$executeRaw`
           INSERT INTO "SeasonTeamDepthChartEntry"
-          ("id", "seasonId", "teamId", "driverId", "priority", "createdAt", "updatedAt")
+          ("id", "seasonId", "teamId", "driverId", "priority", "effectiveFromRound", "effectiveToRound", "createdAt", "updatedAt")
           VALUES ${Prisma.join(values)}
         `;
       }
     });
+
+    const reprocessResult = await reprocessSeasonStandings(
+      seasonId,
+      "DEPTH_CHART_UPDATE",
+    );
+    if (!reprocessResult.success) {
+      return {
+        success: false,
+        error: reprocessResult.error ?? "Erro ao reprocessar classificação da temporada",
+      };
+    }
 
     return { success: true };
   } catch (error) {

@@ -212,10 +212,14 @@ model SeasonTeamAssignment {
 
   joinedAt    DateTime @default(now())
   leftAt      DateTime? // Null = still active
+  effectiveFromRound Int @default(1)
+  effectiveToRound   Int?
 
   // Partial unique index enforced in DB (see migration): only one active (leftAt IS NULL) per (seasonId, driverId)
   @@index([seasonId])
   @@index([seasonId, leftAt, driverId])
+  @@index([seasonId, driverId, effectiveFromRound])
+  @@index([seasonId, driverId, effectiveToRound])
   @@index([teamId])
   @@index([driverId])
 }
@@ -473,13 +477,14 @@ model SeasonTeamDepthChartEntry {
 
   // Lower number = higher priority (1 is top)
   priority    Int
+  effectiveFromRound Int @default(1)
+  effectiveToRound   Int?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([seasonId, teamId, driverId])
-  @@unique([seasonId, teamId, priority])
-  @@index([seasonId, teamId, priority])
+  @@index([seasonId, teamId, effectiveFromRound, priority])
+  @@index([seasonId, teamId, effectiveToRound])
   @@index([seasonId, driverId])
 }
 

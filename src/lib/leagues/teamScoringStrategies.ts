@@ -12,10 +12,14 @@ export type TeamStats = {
 export type TeamRaceContributors = Map<string, Record<string, string[]>>;
 
 type AssignmentLike = {
+  id?: string;
   teamId: string;
   driverId: string;
+  effectiveFromRound?: number;
+  effectiveToRound?: number | null;
   joinedAt: Date;
   leftAt: Date | null;
+  updatedAt?: Date;
 };
 
 type RoundResultLike = {
@@ -37,6 +41,7 @@ type EventRoundLike = {
 
 type RaceLike = {
   id: string;
+  round: number;
   createdAt: Date;
   scheduledDate: Date | null;
   eventRounds: EventRoundLike[];
@@ -47,6 +52,8 @@ type DepthChartEntryLike = {
   teamId: string;
   driverId: string;
   priority: number;
+  effectiveFromRound?: number;
+  effectiveToRound?: number | null;
 };
 
 type SlotRosterEntryLike = {
@@ -60,6 +67,100 @@ type SlotRosterEntryLike = {
 
 function isReverseGridRound(round: EventRoundLike): boolean {
   return round.apiRoundType === "REVERSE_GRID_QUALI";
+}
+
+function isAssignmentActiveAtRound(
+  assignment: AssignmentLike,
+  roundNumber: number,
+  raceReferenceDate: Date,
+): boolean {
+  if (typeof assignment.effectiveFromRound === "number") {
+    const fromRound = assignment.effectiveFromRound;
+    const toRound = assignment.effectiveToRound ?? null;
+    return fromRound <= roundNumber && (toRound === null || toRound >= roundNumber);
+  }
+
+  return (
+    assignment.joinedAt <= raceReferenceDate &&
+    (!assignment.leftAt || assignment.leftAt > raceReferenceDate)
+  );
+}
+
+function isCandidateAssignmentNewer(
+  current: AssignmentLike | undefined,
+  candidate: AssignmentLike,
+): boolean {
+  if (!current) return true;
+
+  const currentUpdatedAt = (current.updatedAt ?? current.joinedAt).getTime();
+  const candidateUpdatedAt = (candidate.updatedAt ?? candidate.joinedAt).getTime();
+  if (candidateUpdatedAt !== currentUpdatedAt) {
+    return candidateUpdatedAt > currentUpdatedAt;
+  }
+
+  const currentId = current.id ?? "";
+  const candidateId = candidate.id ?? "";
+  return candidateId.localeCompare(currentId) > 0;
+}
+
+function resolveRaceDriverTeams(
+  teamAssignments: AssignmentLike[],
+  raceRound: number,
+  raceReferenceDate: Date,
+): Map<string, string> {
+  const activeAssignmentByDriver = new Map<string, AssignmentLike>();
+
+  for (const assignment of teamAssignments) {
+    if (!isAssignmentActiveAtRound(assignment, raceRound, raceReferenceDate)) continue;
+
+    const current = activeAssignmentByDriver.get(assignment.driverId);
+    if (isCandidateAssignmentNewer(current, assignment)) {
+      activeAssignmentByDriver.set(assignment.driverId, assignment);
+    }
+  }
+
+  const raceDriverTeams = new Map<string, string>();
+  for (const [driverId, assignment] of activeAssignmentByDriver.entries()) {
+    raceDriverTeams.set(driverId, assignment.teamId);
+  }
+
+  return raceDriverTeams;
+}
+
+function getDepthChartSnapshotByTeam(
+  depthChartEntries: DepthChartEntryLike[],
+  roundNumber: number,
+): Map<string, DepthChartEntryLike[]> {
+  const latestVersionByTeam = new Map<string, number>();
+
+  for (const entry of depthChartEntries) {
+    const fromRound = entry.effectiveFromRound ?? 1;
+    const toRound = entry.effectiveToRound ?? null;
+    if (fromRound > roundNumber) continue;
+    if (toRound !== null && toRound < roundNumber) continue;
+
+    const current = latestVersionByTeam.get(entry.teamId) ?? Number.MIN_SAFE_INTEGER;
+    if (fromRound > current) {
+      latestVersionByTeam.set(entry.teamId, fromRound);
+    }
+  }
+
+  const snapshotByTeam = new Map<string, DepthChartEntryLike[]>();
+  for (const entry of depthChartEntries) {
+    const fromRound = entry.effectiveFromRound ?? 1;
+    if (latestVersionByTeam.get(entry.teamId) !== fromRound) continue;
+
+    const list = snapshotByTeam.get(entry.teamId) ?? [];
+    list.push(entry);
+    snapshotByTeam.set(entry.teamId, list);
+  }
+
+  for (const [teamId, entries] of snapshotByTeam.entries()) {
+    entries.sort((a, b) => a.priority - b.priority || a.driverId.localeCompare(b.driverId));
+    snapshotByTeam.set(teamId, entries);
+  }
+
+  return snapshotByTeam;
 }
 
 export function calculateTeamStatsByMode(params: {
@@ -154,16 +255,12 @@ export function calculateTeamRaceContributorsByMode(params: {
     }
 
     for (const race of races) {
-      const raceDriverTeams = new Map<string, string>();
       const raceReferenceDate = race.scheduledDate ?? race.createdAt;
-      for (const assignment of teamAssignments) {
-        if (
-          assignment.joinedAt <= raceReferenceDate &&
-          (!assignment.leftAt || assignment.leftAt > raceReferenceDate)
-        ) {
-          raceDriverTeams.set(assignment.driverId, assignment.teamId);
-        }
-      }
+      const raceDriverTeams = resolveRaceDriverTeams(
+        teamAssignments,
+        race.round,
+        raceReferenceDate,
+      );
 
       const raceParticipants = new Set<string>();
       const racePointsByDriver = new Map<string, number>();
@@ -283,17 +380,8 @@ export function calculateTeamRaceContributorsByMode(params: {
       }
     }
   } else if (mode === "DEPTH_CHART") {
-    const sortedEntries = [...depthChartEntries].sort(
-      (a, b) => a.priority - b.priority || a.driverId.localeCompare(b.driverId),
-    );
-    const depthChartByTeam = new Map<string, DepthChartEntryLike[]>();
-    for (const entry of sortedEntries) {
-      const list = depthChartByTeam.get(entry.teamId) ?? [];
-      list.push(entry);
-      depthChartByTeam.set(entry.teamId, list);
-    }
-
     for (const race of races) {
+      const depthChartByTeam = getDepthChartSnapshotByTeam(depthChartEntries, race.round);
 
       const raceParticipants = new Set<string>();
       const racePointsByDriver = new Map<string, number>();
@@ -335,30 +423,23 @@ export function calculateTeamRaceContributorsByMode(params: {
 
     }
   } else {
-    const currentActiveTeamByDriver = new Map<string, { teamId: string; joinedAt: Date }>();
+    const currentActiveTeamByDriver = new Map<string, AssignmentLike>();
     for (const assignment of teamAssignments) {
-      if (!assignment.leftAt) {
+      if (!assignment.leftAt && (assignment.effectiveToRound ?? null) === null) {
         const existing = currentActiveTeamByDriver.get(assignment.driverId);
-        if (!existing || assignment.joinedAt > existing.joinedAt) {
-          currentActiveTeamByDriver.set(assignment.driverId, {
-            teamId: assignment.teamId,
-            joinedAt: assignment.joinedAt,
-          });
+        if (isCandidateAssignmentNewer(existing, assignment)) {
+          currentActiveTeamByDriver.set(assignment.driverId, assignment);
         }
       }
     }
 
     for (const race of races) {
-      const raceDriverTeams = new Map<string, string>();
       const raceReferenceDate = race.scheduledDate ?? race.createdAt;
-      for (const assignment of teamAssignments) {
-        if (
-          assignment.joinedAt <= raceReferenceDate &&
-          (!assignment.leftAt || assignment.leftAt > raceReferenceDate)
-        ) {
-          raceDriverTeams.set(assignment.driverId, assignment.teamId);
-        }
-      }
+      const raceDriverTeams = resolveRaceDriverTeams(
+        teamAssignments,
+        race.round,
+        raceReferenceDate,
+      );
 
       for (const round of race.eventRounds) {
         if (!roundCountsForStandings(round, seasonSprintConfig)) continue;
@@ -419,16 +500,12 @@ function calculateSlotMulliganTeamStats(params: {
   }
 
   for (const race of races) {
-    const raceDriverTeams = new Map<string, string>();
     const raceReferenceDate = race.scheduledDate ?? race.createdAt;
-    for (const assignment of teamAssignments) {
-      if (
-        assignment.joinedAt <= raceReferenceDate &&
-        (!assignment.leftAt || assignment.leftAt > raceReferenceDate)
-      ) {
-        raceDriverTeams.set(assignment.driverId, assignment.teamId);
-      }
-    }
+    const raceDriverTeams = resolveRaceDriverTeams(
+      teamAssignments,
+      race.round,
+      raceReferenceDate,
+    );
 
     const raceParticipants = new Set<string>();
     const racePointsByDriver = new Map<string, number>();
@@ -633,18 +710,9 @@ function calculateDepthChartTeamStats(params: {
   const { races, depthChartEntries, seasonSprintConfig } = params;
 
   const teamStats = new Map<string, TeamStats>();
-  const sortedEntries = [...depthChartEntries].sort(
-    (a, b) => a.priority - b.priority || a.driverId.localeCompare(b.driverId),
-  );
-
-  const depthChartByTeam = new Map<string, DepthChartEntryLike[]>();
-  for (const entry of sortedEntries) {
-    const list = depthChartByTeam.get(entry.teamId) ?? [];
-    list.push(entry);
-    depthChartByTeam.set(entry.teamId, list);
-  }
 
   for (const race of races) {
+    const depthChartByTeam = getDepthChartSnapshotByTeam(depthChartEntries, race.round);
     const raceParticipants = new Set<string>();
     const racePointsByDriver = new Map<string, number>();
     for (const round of race.eventRounds) {
@@ -725,34 +793,23 @@ function calculateStandardTeamStats(params: {
 
   const teamStats = new Map<string, TeamStats>();
 
-  const currentActiveTeamByDriver = new Map<
-    string,
-    { teamId: string; joinedAt: Date }
-  >();
+  const currentActiveTeamByDriver = new Map<string, AssignmentLike>();
   for (const assignment of teamAssignments) {
-    if (!assignment.leftAt) {
+    if (!assignment.leftAt && (assignment.effectiveToRound ?? null) === null) {
       const existing = currentActiveTeamByDriver.get(assignment.driverId);
-      if (!existing || assignment.joinedAt > existing.joinedAt) {
-        currentActiveTeamByDriver.set(assignment.driverId, {
-          teamId: assignment.teamId,
-          joinedAt: assignment.joinedAt,
-        });
+      if (isCandidateAssignmentNewer(existing, assignment)) {
+        currentActiveTeamByDriver.set(assignment.driverId, assignment);
       }
     }
   }
 
   for (const race of races) {
-    const raceDriverTeams = new Map<string, string>();
     const raceReferenceDate = race.scheduledDate ?? race.createdAt;
-
-    for (const assignment of teamAssignments) {
-      if (
-        assignment.joinedAt <= raceReferenceDate &&
-        (!assignment.leftAt || assignment.leftAt > raceReferenceDate)
-      ) {
-        raceDriverTeams.set(assignment.driverId, assignment.teamId);
-      }
-    }
+    const raceDriverTeams = resolveRaceDriverTeams(
+      teamAssignments,
+      race.round,
+      raceReferenceDate,
+    );
 
     for (const round of race.eventRounds) {
       if (!roundCountsForStandings(round, seasonSprintConfig)) continue;

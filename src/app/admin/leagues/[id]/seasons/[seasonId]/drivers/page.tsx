@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback, useRef } from "react";
+import { use, useState, useEffect, useCallback, useRef, type DragEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LogoImage } from "@/components/LogoImage";
@@ -20,6 +20,7 @@ import {
   Settings,
   RefreshCw,
   List,
+  GripVertical,
   ChevronUp,
   ChevronDown,
 } from "lucide-react";
@@ -60,6 +61,8 @@ interface Assignment {
   driver: Driver;
   joinedAt: Date;
   leftAt: Date | null;
+  effectiveFromRound: number;
+  effectiveToRound: number | null;
 }
 
 interface Team {
@@ -68,6 +71,9 @@ interface Team {
   color: string | null;
   logoUrl: string | null;
   teamSeasonPoints?: number;
+  lastDepthChartUpdatedAt?: Date | string | null;
+  lastDepthChartRound?: number | null;
+  lastDepthChartRaceName?: string | null;
   assignments: Assignment[];
   activeAssignments: Assignment[];
 }
@@ -79,6 +85,12 @@ interface Season {
   leagueId: string;
   leagueName: string;
   teamScoringMode: "STANDARD" | "DEPTH_CHART" | "SLOT_MULLIGAN";
+  rounds: Array<{
+    id: string;
+    round: number;
+    name: string;
+    status: string;
+  }>;
 }
 
 interface FoundPlayer {
@@ -112,6 +124,42 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const formatDepthChartUpdatedAt = (value?: Date | string | null): string => {
+    if (!value) return "Nunca";
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "Nunca";
+
+    return date.toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatAssignmentRoundRange = (assignment: Assignment): string => {
+    const fromRound = assignment.effectiveFromRound;
+    const toRound = assignment.effectiveToRound;
+
+    const getRoundLabel = (round: number): string => {
+      const roundEntry = season?.rounds.find((entry) => entry.round === round);
+      return roundEntry?.name ?? `R${round}`;
+    };
+
+    const fromLabel = getRoundLabel(fromRound);
+
+    if (toRound !== null && toRound !== fromRound) {
+      return `${fromLabel} a ${getRoundLabel(toRound)}`;
+    }
+
+    if (toRound !== null) {
+      return fromLabel;
+    }
+
+    return `desde ${fromLabel}`;
+  };
+
   // Add driver modal state
   const [showAddModal, setShowAddModal] = useState(false);
   const [addMode, setAddMode] = useState<"single" | "batch" | "manual">(
@@ -125,6 +173,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
   const [searching, setSearching] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const [effectiveRoundForAdd, setEffectiveRoundForAdd] = useState<number | "">("");
   const [isCreating, setIsCreating] = useState(false);
   const [foundPlayer, setFoundPlayer] = useState<FoundPlayer | null>(null);
   const [createStatus, setCreateStatus] = useState<{
@@ -152,6 +201,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
   const [transferFromTeam, setTransferFromTeam] = useState<Team | null>(null);
   const [selectedTeamForTransfer, setSelectedTeamForTransfer] =
     useState<string>("");
+  const [effectiveRoundForTransfer, setEffectiveRoundForTransfer] = useState<number | "">("");
   const [transferring, setTransferring] = useState(false);
 
   // Sync state
@@ -165,6 +215,11 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
   const [depthBulkTeam, setDepthBulkTeam] = useState<Team | null>(null);
   const [depthBulkInput, setDepthBulkInput] = useState("");
   const [depthBulkError, setDepthBulkError] = useState<string | null>(null);
+  const [draggingDepth, setDraggingDepth] = useState<{
+    teamId: string;
+    driverId: string;
+  } | null>(null);
+  const [dragOverDepthDriverId, setDragOverDepthDriverId] = useState<string | null>(null);
   const pendingDepthChartOrderRef = useRef(new Map<string, string[]>());
   const [dirtyDepthChartTeamIds, setDirtyDepthChartTeamIds] = useState<string[]>(
     [],
@@ -172,6 +227,10 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
   const [savingDepthChartTeamIds, setSavingDepthChartTeamIds] = useState<
     string[]
   >([]);
+  const [showDepthRoundModal, setShowDepthRoundModal] = useState(false);
+  const [depthRoundTeamId, setDepthRoundTeamId] = useState<string | null>(null);
+  const [depthRoundValue, setDepthRoundValue] = useState<number | "">("");
+  const [depthRoundError, setDepthRoundError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -216,6 +275,18 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
       pendingOrders.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!season || season.rounds.length === 0) return;
+
+    if (effectiveRoundForAdd === "") {
+      setEffectiveRoundForAdd(season.rounds[0].round);
+    }
+
+    if (effectiveRoundForTransfer === "") {
+      setEffectiveRoundForTransfer(season.rounds[0].round);
+    }
+  }, [season, effectiveRoundForAdd, effectiveRoundForTransfer]);
 
   useEffect(() => {
     const timeoutId = setTimeout(async () => {
@@ -325,6 +396,10 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
 
   async function handleAssignDriver() {
     if (!selectedDriver) return;
+    if (effectiveRoundForAdd === "") {
+      setError("Selecione a rodada de vigência");
+      return;
+    }
 
     setAssigning(true);
     const result = selectedTeamForAdd
@@ -332,8 +407,13 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
           seasonId,
           selectedTeamForAdd,
           selectedDriver.id,
+          Number(effectiveRoundForAdd),
         )
-      : await assignDriverWithoutTeam(seasonId, selectedDriver.id);
+      : await assignDriverWithoutTeam(
+          seasonId,
+          selectedDriver.id,
+          Number(effectiveRoundForAdd),
+        );
 
     if (result.success) {
       setShowAddModal(false);
@@ -351,6 +431,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
     setSearchResults([]);
     setSelectedDriver(null);
     setSelectedTeamForAdd("");
+    setEffectiveRoundForAdd(season?.rounds[0]?.round ?? "");
     setFoundPlayer(null);
     setCreateStatus(null);
     setIsCreating(false);
@@ -406,6 +487,13 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
 
   async function handleBatchAdd() {
     if (!batchUsernames.trim()) return;
+    if (effectiveRoundForAdd === "") {
+      setCreateStatus({
+        type: "error",
+        message: "Selecione a rodada de vigência antes de processar em lote.",
+      });
+      return;
+    }
 
     // Parse usernames (one per line, comma, or space separated)
     const usernames = batchUsernames
@@ -464,8 +552,13 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
               seasonId,
               selectedTeamForAdd,
               driver.id,
+              Number(effectiveRoundForAdd),
             )
-          : await assignDriverWithoutTeam(seasonId, driver.id);
+          : await assignDriverWithoutTeam(
+              seasonId,
+              driver.id,
+              Number(effectiveRoundForAdd),
+            );
 
         if (assignResult.success) {
           results.success++;
@@ -506,7 +599,20 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
     if (!confirm("Tem certeza que deseja remover este piloto da temporada?"))
       return;
 
-    const result = await removeDriverFromTeam(assignmentId);
+    const suggestedRound = season?.rounds[0]?.round ?? 1;
+    const roundInput = window.prompt(
+      "Rodada de vigência (aplica a partir desta rodada, inclusive):",
+      String(suggestedRound),
+    );
+
+    if (!roundInput) return;
+    const parsedRound = Number(roundInput);
+    if (!Number.isInteger(parsedRound) || parsedRound < 1) {
+      setError("Rodada de vigência inválida");
+      return;
+    }
+
+    const result = await removeDriverFromTeam(assignmentId, parsedRound);
     if (result.success) {
       loadData();
     } else {
@@ -518,17 +624,28 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
     setTransferringAssignment(assignment);
     setTransferFromTeam(fromTeam);
     setSelectedTeamForTransfer("");
+    setEffectiveRoundForTransfer(season?.rounds[0]?.round ?? "");
     setShowTransferModal(true);
   }
 
   async function handleTransfer() {
     if (!transferringAssignment || !selectedTeamForTransfer) return;
+    if (effectiveRoundForTransfer === "") {
+      setError("Selecione a rodada de vigência");
+      return;
+    }
 
     setTransferring(true);
+    const targetTeamId =
+      selectedTeamForTransfer === "__TEAMLESS__"
+        ? null
+        : selectedTeamForTransfer;
+
     const result = await transferDriver(
       seasonId,
       transferringAssignment.driver.id,
-      selectedTeamForTransfer,
+      targetTeamId,
+      Number(effectiveRoundForTransfer),
     );
 
     if (result.success) {
@@ -536,6 +653,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
       setTransferringAssignment(null);
       setTransferFromTeam(null);
       setSelectedTeamForTransfer("");
+      setEffectiveRoundForTransfer(season?.rounds[0]?.round ?? "");
       loadData();
     } else {
       setError(result.error || "Erro ao transferir piloto");
@@ -551,6 +669,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
     setSelectedDriver(driver);
     setFoundPlayer(null);
     setCreateStatus(null);
+    setEffectiveRoundForAdd(season?.rounds[0]?.round ?? "");
     setShowAddModal(true);
   }
 
@@ -626,9 +745,20 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
   }
 
   const flushDepthChartSave = useCallback(
-    async (teamId: string) => {
+    async (
+      teamId: string,
+      parsedRound: number,
+    ): Promise<{ success: boolean; error?: string }> => {
       const orderedDriverIds = pendingDepthChartOrderRef.current.get(teamId);
-      if (!orderedDriverIds) return;
+      if (!orderedDriverIds) {
+        return { success: false, error: "Nenhuma alteração pendente para salvar." };
+      }
+
+      if (!Number.isInteger(parsedRound) || parsedRound < 1) {
+        const errorMessage = "Rodada de vigência inválida para depth chart";
+        setError(errorMessage);
+        return { success: false, error: errorMessage };
+      }
 
       pendingDepthChartOrderRef.current.delete(teamId);
       setSavingDepthChartTeamIds((current) =>
@@ -637,7 +767,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
 
       try {
         const result = await Promise.race([
-          saveTeamDepthChart(seasonId, teamId, orderedDriverIds),
+          saveTeamDepthChart(seasonId, teamId, orderedDriverIds, parsedRound),
           new Promise<{ success: false; error: string }>((resolve) => {
             setTimeout(() => {
               resolve({
@@ -650,16 +780,23 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
         ]);
 
         if (!result.success) {
-          setError(result.error || "Erro ao salvar depth chart");
+          const errorMessage = result.error || "Erro ao salvar depth chart";
+          setError(errorMessage);
           loadData();
+          return { success: false, error: errorMessage };
         } else if (!pendingDepthChartOrderRef.current.has(teamId)) {
           setDirtyDepthChartTeamIds((current) =>
             current.filter((id) => id !== teamId),
           );
         }
+
+        await loadData();
+        return { success: true };
       } catch {
-        setError("Erro ao salvar depth chart");
+        const errorMessage = "Erro ao salvar depth chart";
+        setError(errorMessage);
         loadData();
+        return { success: false, error: errorMessage };
       } finally {
         setSavingDepthChartTeamIds((current) =>
           current.filter((id) => id !== teamId),
@@ -668,6 +805,43 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
     },
     [seasonId, loadData],
   );
+
+  function openDepthRoundModal(teamId: string) {
+    const orderedDriverIds = pendingDepthChartOrderRef.current.get(teamId);
+    if (!orderedDriverIds) return;
+
+    const suggestedRound = season?.rounds.at(-1)?.round ?? season?.rounds[0]?.round ?? 1;
+    setDepthRoundTeamId(teamId);
+    setDepthRoundValue(suggestedRound);
+    setDepthRoundError(null);
+    setShowDepthRoundModal(true);
+  }
+
+  function closeDepthRoundModal() {
+    if (depthRoundTeamId && savingDepthChartTeamIds.includes(depthRoundTeamId)) return;
+    setShowDepthRoundModal(false);
+    setDepthRoundTeamId(null);
+    setDepthRoundError(null);
+  }
+
+  async function handleConfirmDepthRound() {
+    if (!depthRoundTeamId || depthRoundValue === "") return;
+    const round = Number(depthRoundValue);
+    if (!Number.isInteger(round) || round < 1) {
+      setDepthRoundError("Rodada de vigência inválida para depth chart");
+      return;
+    }
+
+    const result = await flushDepthChartSave(depthRoundTeamId, round);
+    if (!result.success) {
+      setDepthRoundError(result.error || "Não foi possível salvar a ordem com a rodada selecionada.");
+      return;
+    }
+
+    setShowDepthRoundModal(false);
+    setDepthRoundTeamId(null);
+    setDepthRoundError(null);
+  }
 
   function applyDepthChartOrder(teamId: string, orderedDriverIds: string[]) {
     const nextPriorityByDriverId = new Map(
@@ -733,6 +907,61 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
     newOrder.splice(targetIndex, 0, movedDriverId);
 
     applyDepthChartOrder(team.id, newOrder);
+  }
+
+  function handleDepthDragStart(team: Team, driverId: string) {
+    if (season?.teamScoringMode !== "DEPTH_CHART" || isArchived) return;
+    setDraggingDepth({ teamId: team.id, driverId });
+    setDragOverDepthDriverId(driverId);
+  }
+
+  function handleDepthDragEnd() {
+    setDraggingDepth(null);
+    setDragOverDepthDriverId(null);
+  }
+
+  function handleDepthDragOver(event: DragEvent<HTMLDivElement>, team: Team, driverId: string) {
+    if (!draggingDepth) return;
+    if (draggingDepth.teamId !== team.id) return;
+    event.preventDefault();
+    if (dragOverDepthDriverId !== driverId) {
+      setDragOverDepthDriverId(driverId);
+    }
+  }
+
+  function handleDepthDrop(team: Team, targetDriverId: string) {
+    if (!draggingDepth) return;
+    if (draggingDepth.teamId !== team.id) {
+      handleDepthDragEnd();
+      return;
+    }
+    if (draggingDepth.driverId === targetDriverId) {
+      handleDepthDragEnd();
+      return;
+    }
+
+    const assignmentByDriverId = new Map(
+      team.activeAssignments.map((assignment) => [assignment.driver.id, assignment]),
+    );
+
+    const pendingOrder = pendingDepthChartOrderRef.current.get(team.id);
+    const baseOrder =
+      pendingOrder && pendingOrder.length === team.activeAssignments.length
+        ? pendingOrder.filter((driverId) => assignmentByDriverId.has(driverId))
+        : getOrderedAssignments(team).map((assignment) => assignment.driver.id);
+
+    const draggedIndex = baseOrder.indexOf(draggingDepth.driverId);
+    const targetIndex = baseOrder.indexOf(targetDriverId);
+    if (draggedIndex === -1 || targetIndex === -1) {
+      handleDepthDragEnd();
+      return;
+    }
+
+    const newOrder = [...baseOrder];
+    const [movedDriverId] = newOrder.splice(draggedIndex, 1);
+    newOrder.splice(targetIndex, 0, movedDriverId);
+    applyDepthChartOrder(team.id, newOrder);
+    handleDepthDragEnd();
   }
 
   function openDepthBulkModal(team: Team) {
@@ -1085,9 +1314,19 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                       </span>
                     </p>
                     {season.teamScoringMode === "DEPTH_CHART" && (
-                      <p className="text-xs text-zinc-500 mt-1">
-                        Ordem da hierarquia define os 3 pilotos que pontuam por equipe
-                      </p>
+                      <div className="mt-1 space-y-1">
+                        <p className="text-xs text-zinc-500">
+                          Ordem da hierarquia define os 3 pilotos que pontuam por equipe
+                        </p>
+                        <p className="text-xs text-zinc-500">
+                          Ultima atualizacao do depth chart: {formatDepthChartUpdatedAt(team.lastDepthChartUpdatedAt)}
+                          {team.lastDepthChartRaceName
+                            ? ` (${team.lastDepthChartRaceName})`
+                            : team.lastDepthChartRound
+                              ? ` (rodada ${team.lastDepthChartRound})`
+                              : ""}
+                        </p>
+                      </div>
                     )}
                     {season.teamScoringMode === "SLOT_MULLIGAN" && (
                       <p className="text-xs text-zinc-500 mt-1">
@@ -1110,7 +1349,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                         </button>
 
                         <button
-                          onClick={() => void flushDepthChartSave(team.id)}
+                          onClick={() => openDepthRoundModal(team.id)}
                           disabled={
                             !dirtyDepthChartTeamIds.includes(team.id) ||
                             savingDepthChartTeamIds.includes(team.id)
@@ -1164,52 +1403,73 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                     Nenhum piloto vinculado a esta equipe
                   </p>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="space-y-2">
                     {orderedAssignments.map((assignment, index) => (
                       <div
                         key={assignment.id}
                         id={`driver-${assignment.driver.id}`}
-                        className={`p-3 bg-zinc-950/50 border rounded-lg group transition-all duration-700 ${
+                        draggable={season.teamScoringMode === "DEPTH_CHART" && !isArchived}
+                        onDragStart={() =>
+                          handleDepthDragStart(team, assignment.driver.id)
+                        }
+                        onDragEnd={handleDepthDragEnd}
+                        onDragOver={(event) =>
+                          handleDepthDragOver(event, team, assignment.driver.id)
+                        }
+                        onDrop={() => handleDepthDrop(team, assignment.driver.id)}
+                        className={`bg-zinc-950/60 border rounded-lg transition-all duration-700 ${
                           highlightedDriverId === assignment.driver.id
                             ? "border-cyan-400 ring-2 ring-cyan-400/50 bg-cyan-500/5"
-                            : "border-zinc-800"
+                            : dragOverDepthDriverId === assignment.driver.id &&
+                                draggingDepth?.teamId === team.id
+                              ? "border-cyan-500/70"
+                              : "border-zinc-800"
                         }`}
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
+                        <div className="flex items-center gap-3 px-3 py-2.5">
+                          {season.teamScoringMode === "DEPTH_CHART" && !isArchived && (
+                            <span
+                              aria-hidden="true"
+                              className="p-1.5 rounded text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing"
+                              title="Arraste para reordenar"
+                            >
+                              <GripVertical size={14} />
+                            </span>
+                          )}
+
+                          <span className="w-8 shrink-0 text-center text-xs font-mono text-zinc-500">
+                            {season.teamScoringMode === "DEPTH_CHART"
+                              ? `#${assignment.driver.depthPriority ?? index + 1}`
+                              : `#${index + 1}`}
+                          </span>
+
+                          <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0 border border-zinc-700">
                             <img
                               src={`https://minotar.net/helm/${assignment.driver.uuid}/32.png`}
                               alt={assignment.driver.currentName || "Driver"}
                               className="w-full h-full object-cover"
                             />
                           </div>
-                          <div className="min-w-0">
-                            <p className="text-white font-medium leading-tight break-words">
+
+                          <div className="min-w-0 flex-1">
+                            <p className="text-white font-medium leading-tight truncate">
                               {assignment.driver.currentName ||
                                 assignment.driver.uuid.slice(0, 8)}
                             </p>
                             <p className="text-xs text-zinc-500 font-mono truncate">
                               {assignment.driver.uuid}
                             </p>
+                            <p className="text-[11px] text-zinc-400 mt-1 font-mono">
+                              Na equipe {formatAssignmentRoundRange(assignment)}
+                            </p>
                           </div>
-                        </div>
+                          <span className="px-2 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-mono whitespace-nowrap">
+                            {assignment.driver.seasonPoints ?? 0} pts
+                          </span>
 
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            {season.teamScoringMode === "DEPTH_CHART" && (
-                              <span className="px-2 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-mono whitespace-nowrap">
-                                #{assignment.driver.depthPriority ?? index + 1}
-                              </span>
-                            )}
-
-                            <span className="px-2 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-mono whitespace-nowrap">
-                              {assignment.driver.seasonPoints ?? 0} pts
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1">
                             {season.teamScoringMode === "DEPTH_CHART" && !isArchived && (
-                              <div className="flex items-center gap-1">
+                              <>
                                 <button
                                   onClick={() =>
                                     handleMoveDepthChart(team, assignment.id, "up")
@@ -1224,18 +1484,15 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                                   onClick={() =>
                                     handleMoveDepthChart(team, assignment.id, "down")
                                   }
-                                  disabled={
-                                    index === orderedAssignments.length - 1
-                                  }
+                                  disabled={index === orderedAssignments.length - 1}
                                   className="p-1.5 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-500 hover:text-zinc-300 rounded transition-colors"
                                   title="Descer na hierarquia"
                                 >
                                   <ChevronDown size={14} />
                                 </button>
-                              </div>
+                              </>
                             )}
 
-                            {/* Sync button - visible when data is incomplete */}
                             {!assignment.driver.colorCode && (
                               <button
                                 onClick={() =>
@@ -1257,26 +1514,22 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                             )}
 
                             {!isArchived && (
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <>
                                 <button
-                                  onClick={() =>
-                                    openTransferModal(assignment, team)
-                                  }
+                                  onClick={() => openTransferModal(assignment, team)}
                                   className="p-1.5 hover:bg-blue-500/10 text-zinc-400 hover:text-blue-400 rounded transition-colors"
                                   title="Transferir para outra equipe"
                                 >
                                   <ArrowRightLeft size={14} />
                                 </button>
                                 <button
-                                  onClick={() =>
-                                    handleRemoveDriver(assignment.id)
-                                  }
+                                  onClick={() => handleRemoveDriver(assignment.id)}
                                   className="p-1.5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 rounded transition-colors"
                                   title="Remover da temporada"
                                 >
                                   <X size={14} />
                                 </button>
-                              </div>
+                              </>
                             )}
                           </div>
                         </div>
@@ -1358,6 +1611,75 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
           </div>
         )}
       </div>
+
+      {showDepthRoundModal && depthRoundTeamId && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-zinc-800">
+              <div>
+                <h3 className="text-lg font-bold text-white">Vigência do Depth Chart</h3>
+                <p className="text-sm text-zinc-500 mt-1">
+                  {teams.find((team) => team.id === depthRoundTeamId)?.name ?? "Equipe"}
+                </p>
+              </div>
+              <button
+                onClick={closeDepthRoundModal}
+                disabled={savingDepthChartTeamIds.includes(depthRoundTeamId)}
+                className="p-2 hover:bg-zinc-800 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <X size={20} className="text-zinc-400" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-zinc-300">
+                Escolha a corrida a partir da qual esta nova ordem deve valer
+                (inclusive). Resultados anteriores não serão alterados.
+              </p>
+
+              <div>
+                <label className="block text-xs uppercase tracking-wide font-semibold text-zinc-500 mb-2">
+                  Corrida de vigência
+                </label>
+                <select
+                  value={depthRoundValue}
+                  onChange={(event) => setDepthRoundValue(Number(event.target.value))}
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-cyan-500/50"
+                >
+                  {(season?.rounds ?? []).map((roundEntry) => (
+                    <option key={roundEntry.id} value={roundEntry.round}>
+                      Rodada {roundEntry.round} - {roundEntry.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {depthRoundError && (
+                <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  {depthRoundError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-5 border-t border-zinc-800">
+              <button
+                onClick={closeDepthRoundModal}
+                disabled={savingDepthChartTeamIds.includes(depthRoundTeamId)}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => void handleConfirmDepthRound()}
+                disabled={savingDepthChartTeamIds.includes(depthRoundTeamId)}
+                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-zinc-950 font-semibold rounded-lg transition-colors disabled:opacity-50"
+              >
+                {savingDepthChartTeamIds.includes(depthRoundTeamId) ? "Salvando..." : "Salvar ordem"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Depth Chart Bulk Order Modal */}
       {showDepthBulkModal && depthBulkTeam && (
@@ -1513,6 +1835,31 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                 </select>
                 <p className="text-xs text-zinc-500 mt-1.5">
                   Deixe sem equipe para adicionar o piloto como avulso nesta temporada.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-2">
+                  Rodada de Vigência
+                </label>
+                <select
+                  value={effectiveRoundForAdd}
+                  onChange={(e) =>
+                    setEffectiveRoundForAdd(
+                      e.target.value ? Number(e.target.value) : "",
+                    )
+                  }
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-cyan-500/50"
+                >
+                  <option value="">Selecione a rodada...</option>
+                  {season.rounds.map((round) => (
+                    <option key={round.id} value={round.round}>
+                      R{round.round} - {round.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-zinc-500 mt-1.5">
+                  Vale a partir desta rodada (inclusive). Rodadas anteriores não são alteradas.
                 </p>
               </div>
 
@@ -1941,7 +2288,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
               {addMode === "single" ? (
                 <button
                   onClick={handleAssignDriver}
-                  disabled={!selectedDriver || assigning}
+                  disabled={!selectedDriver || assigning || effectiveRoundForAdd === ""}
                   className="flex items-center gap-2 px-6 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 font-semibold rounded-lg transition-colors"
                 >
                   {assigning ? (
@@ -1961,7 +2308,8 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                   onClick={handleBatchAdd}
                   disabled={
                     !batchUsernames.trim() ||
-                    batchProcessing
+                    batchProcessing ||
+                    effectiveRoundForAdd === ""
                   }
                   className="flex items-center gap-2 px-6 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 font-semibold rounded-lg transition-colors"
                 >
@@ -2024,6 +2372,7 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                   setTransferringAssignment(null);
                   setTransferFromTeam(null);
                   setSelectedTeamForTransfer("");
+                  setEffectiveRoundForTransfer(season?.rounds[0]?.round ?? "");
                 }}
                 className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               >
@@ -2064,14 +2413,15 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
               {/* Target Team Selection */}
               <div>
                 <label className="block text-sm font-medium text-zinc-300 mb-2">
-                  Para qual equipe?
+                  Destino
                 </label>
                 <select
                   value={selectedTeamForTransfer}
                   onChange={(e) => setSelectedTeamForTransfer(e.target.value)}
                   className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-cyan-500/50"
                 >
-                  <option value="">Selecione uma equipe...</option>
+                  <option value="">Selecione o destino...</option>
+                  <option value="__TEAMLESS__">Sem equipe (avulso)</option>
                   {teams
                     .filter((t) => t.id !== transferFromTeam.id)
                     .map((team) => (
@@ -2081,23 +2431,49 @@ export default function SeasonDriversPage({ params }: DriversPageProps) {
                     ))}
                 </select>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-2">
+                  Rodada de Vigência
+                </label>
+                <select
+                  value={effectiveRoundForTransfer}
+                  onChange={(e) =>
+                    setEffectiveRoundForTransfer(
+                      e.target.value ? Number(e.target.value) : "",
+                    )
+                  }
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-cyan-500/50"
+                >
+                  <option value="">Selecione a rodada...</option>
+                  {season.rounds.map((round) => (
+                    <option key={round.id} value={round.round}>
+                      R{round.round} - {round.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-zinc-500 mt-1.5">
+                  Aplica nesta rodada e nas seguintes (inclusive).
+                </p>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-3 p-5 border-t border-zinc-800">
               <button
                 onClick={() => {
-                  setShowTransferModal(false);
-                  setTransferringAssignment(null);
-                  setTransferFromTeam(null);
-                  setSelectedTeamForTransfer("");
-                }}
+                    setShowTransferModal(false);
+                    setTransferringAssignment(null);
+                    setTransferFromTeam(null);
+                    setSelectedTeamForTransfer("");
+                    setEffectiveRoundForTransfer(season?.rounds[0]?.round ?? "");
+                  }}
                 className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleTransfer}
-                disabled={!selectedTeamForTransfer || transferring}
+                disabled={!selectedTeamForTransfer || transferring || effectiveRoundForTransfer === ""}
                 className="flex items-center gap-2 px-6 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 font-semibold rounded-lg transition-colors"
               >
                 {transferring ? (

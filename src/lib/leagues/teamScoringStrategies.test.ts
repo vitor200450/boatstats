@@ -82,6 +82,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "api-race-monaco",
+          round: 1,
           createdAt: raceDate,
           scheduledDate: raceDate,
           eventRounds: [
@@ -145,6 +146,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "api-depth-race",
+          round: 1,
           createdAt: new Date(event.date * 1000),
           scheduledDate: new Date(event.date * 1000),
           eventRounds: [
@@ -237,6 +239,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "api-slot-race",
+          round: 1,
           createdAt: new Date(event.date * 1000),
           scheduledDate: new Date(event.date * 1000),
           eventRounds: [
@@ -309,6 +312,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-02-01T00:00:00.000Z"),
           scheduledDate: new Date("2026-02-01T00:00:00.000Z"),
           eventRounds: [
@@ -355,6 +359,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-02-01T00:00:00.000Z"),
           scheduledDate: new Date("2026-02-01T00:00:00.000Z"),
           eventRounds: [
@@ -397,6 +402,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-02-01T00:00:00.000Z"),
           scheduledDate: new Date("2026-02-01T00:00:00.000Z"),
           eventRounds: [
@@ -436,6 +442,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-03-01T00:00:00.000Z"),
           scheduledDate: new Date("2026-03-01T00:00:00.000Z"),
           eventRounds: [
@@ -497,6 +504,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "r1",
+          round: 1,
           createdAt: new Date("2026-01-01"),
           scheduledDate: new Date("2026-01-01"),
           eventRounds: [
@@ -524,6 +532,7 @@ describe("calculateTeamStatsByMode", () => {
         },
         {
           id: "r2",
+          round: 2,
           createdAt: new Date("2026-01-08"),
           scheduledDate: new Date("2026-01-08"),
           eventRounds: [
@@ -551,6 +560,7 @@ describe("calculateTeamStatsByMode", () => {
         },
         {
           id: "r3",
+          round: 3,
           createdAt: new Date("2026-01-15"),
           scheduledDate: new Date("2026-01-15"),
           eventRounds: [
@@ -606,6 +616,7 @@ describe("calculateTeamStatsByMode", () => {
       races: [
         {
           id: "race-1",
+          round: 1,
           createdAt: new Date("2026-02-01T00:00:00.000Z"),
           scheduledDate: new Date("2026-02-01T00:00:00.000Z"),
           eventRounds: [

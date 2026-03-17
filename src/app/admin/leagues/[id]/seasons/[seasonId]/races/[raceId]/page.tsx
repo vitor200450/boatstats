@@ -271,23 +271,99 @@ export default async function RaceDetailsPage({
           drivers: Array<{ id: string; uuid: string; currentName: string | null }>;
           mainDriverIds: string[];
           reserveDriverIds: string[];
+          lastRosterUpdatedAt: Date | null;
+          lastRosterRound: number | null;
+          lastRosterRaceName: string | null;
         }>;
       }
     | undefined;
 
   if (isAdmin && teamScoringMode === "SLOT_MULLIGAN") {
-    const activeAssignments = await prisma.seasonTeamAssignment.findMany({
-      where: { seasonId, leftAt: null, teamId: { not: null } },
-      select: {
-        teamId: true,
-        driver: { select: { id: true, uuid: true, currentName: true } },
-        team: { select: { id: true, name: true } },
-      },
-      orderBy: [{ team: { name: "asc" } }, { driver: { currentName: "asc" } }],
-    });
+    let activeAssignments = await prisma.$queryRaw<
+      Array<{
+        teamId: string;
+        teamName: string;
+        driverId: string;
+        driverUuid: string;
+        driverName: string | null;
+      }>
+    >`
+      WITH active_assignments AS (
+        SELECT
+          a."id",
+          a."driverId",
+          a."teamId",
+          a."joinedAt"
+        FROM "SeasonTeamAssignment" a
+        WHERE a."seasonId" = ${seasonId}
+          AND COALESCE(a."effectiveFromRound", 1) <= ${race.round}
+          AND (a."effectiveToRound" IS NULL OR a."effectiveToRound" >= ${race.round})
+      ),
+      latest_assignments AS (
+        SELECT
+          aa."driverId",
+          aa."teamId",
+          ROW_NUMBER() OVER (
+            PARTITION BY aa."driverId"
+            ORDER BY aa."joinedAt" DESC, (aa."teamId" IS NULL) ASC, aa."id" DESC
+          ) AS rn
+        FROM active_assignments aa
+      )
+      SELECT
+        la."teamId" AS "teamId",
+        t."name" AS "teamName",
+        d."id" AS "driverId",
+        d."uuid" AS "driverUuid",
+        d."currentName" AS "driverName"
+      FROM latest_assignments la
+      INNER JOIN "Team" t ON t."id" = la."teamId"
+      INNER JOIN "Driver" d ON d."id" = la."driverId"
+      WHERE la.rn = 1
+        AND la."teamId" IS NOT NULL
+      ORDER BY t."name" ASC, d."currentName" ASC
+    `;
 
-    // Try to get roster for current race first
-    let rosterRows = await prisma.$queryRaw<
+    if (activeAssignments.length === 0) {
+      activeAssignments = await prisma.$queryRaw<
+        Array<{
+          teamId: string;
+          teamName: string;
+          driverId: string;
+          driverUuid: string;
+          driverName: string | null;
+        }>
+      >`
+        WITH latest_non_null_assignments AS (
+          SELECT
+            a."id",
+            a."driverId",
+            a."teamId",
+            a."effectiveFromRound",
+            a."joinedAt",
+            ROW_NUMBER() OVER (
+              PARTITION BY a."driverId"
+              ORDER BY a."effectiveFromRound" DESC, a."joinedAt" DESC, a."id" DESC
+            ) AS rn
+          FROM "SeasonTeamAssignment" a
+          WHERE a."seasonId" = ${seasonId}
+            AND a."teamId" IS NOT NULL
+        )
+        SELECT
+          lna."teamId" AS "teamId",
+          t."name" AS "teamName",
+          d."id" AS "driverId",
+          d."uuid" AS "driverUuid",
+          d."currentName" AS "driverName"
+        FROM latest_non_null_assignments lna
+        INNER JOIN "Team" t ON t."id" = lna."teamId"
+        INNER JOIN "Driver" d ON d."id" = lna."driverId"
+        WHERE lna.rn = 1
+        ORDER BY t."name" ASC, d."currentName" ASC
+      `;
+    }
+
+    // Get roster for current race, then inherit missing teams from latest previous roster.
+    const currentRaceRosterRows = await prisma.$queryRaw<
       Array<{ teamId: string; driverId: string; role: "MAIN" | "RESERVE"; priority: number }>
     >`
       SELECT r."teamId", i."driverId", i."role", i."priority"
@@ -296,34 +372,36 @@ export default async function RaceDetailsPage({
       WHERE r."seasonId" = ${seasonId} AND r."raceId" = ${raceId}
     `;
 
-    // If no roster defined for current race, try to inherit from the latest
-    // previous race (by round) that has a saved roster.
-    if (rosterRows.length === 0) {
-      const previousRaces = await prisma.race.findMany({
-        where: {
-          seasonId,
-          round: { lt: race.round },
-        },
-        orderBy: { round: "desc" },
-        select: { id: true },
-      });
+    const inheritedRowsByTeam =
+      race.round > 1
+        ? await prisma.$queryRaw<
+            Array<{ teamId: string; driverId: string; role: "MAIN" | "RESERVE"; priority: number }>
+          >`
+            WITH ranked_rosters AS (
+              SELECT
+                r."id" AS "rosterId",
+                r."teamId" AS "teamId",
+                ROW_NUMBER() OVER (
+                  PARTITION BY r."teamId"
+                  ORDER BY rr."round" DESC, r."updatedAt" DESC, r."id" DESC
+                ) AS rn
+              FROM "SeasonRaceTeamRoster" r
+              INNER JOIN "Race" rr ON rr."id" = r."raceId"
+              WHERE r."seasonId" = ${seasonId}
+                AND rr."round" < ${race.round}
+            )
+            SELECT rr."teamId", i."driverId", i."role", i."priority"
+            FROM ranked_rosters rr
+            INNER JOIN "SeasonRaceTeamRosterItem" i ON i."rosterId" = rr."rosterId"
+            WHERE rr.rn = 1
+          `
+        : [];
 
-      for (const previousRace of previousRaces) {
-        const inheritedRows = await prisma.$queryRaw<
-          Array<{ teamId: string; driverId: string; role: "MAIN" | "RESERVE"; priority: number }>
-        >`
-          SELECT r."teamId", i."driverId", i."role", i."priority"
-          FROM "SeasonRaceTeamRoster" r
-          INNER JOIN "SeasonRaceTeamRosterItem" i ON i."rosterId" = r."id"
-          WHERE r."seasonId" = ${seasonId} AND r."raceId" = ${previousRace.id}
-        `;
-
-        if (inheritedRows.length > 0) {
-          rosterRows = inheritedRows;
-          break;
-        }
-      }
-    }
+    const currentRosterTeamIds = new Set(currentRaceRosterRows.map((row) => row.teamId));
+    const rosterRows = [
+      ...currentRaceRosterRows,
+      ...inheritedRowsByTeam.filter((row) => !currentRosterTeamIds.has(row.teamId)),
+    ];
 
     const teamsMap = new Map<
       string,
@@ -333,21 +411,88 @@ export default async function RaceDetailsPage({
         drivers: Array<{ id: string; uuid: string; currentName: string | null }>;
         mainDriverIds: string[];
         reserveDriverIds: string[];
+        lastRosterUpdatedAt: Date | null;
+        lastRosterRound: number | null;
+        lastRosterRaceName: string | null;
       }
     >();
 
+    const latestRosterByTeam = await prisma.$queryRaw<
+      Array<{ teamId: string; raceRound: number; raceName: string; updatedAt: Date }>
+    >`
+      WITH ranked_rosters AS (
+        SELECT
+          r."teamId" AS "teamId",
+          rr."round" AS "raceRound",
+          rr."name" AS "raceName",
+          r."updatedAt" AS "updatedAt",
+          ROW_NUMBER() OVER (
+            PARTITION BY r."teamId"
+            ORDER BY rr."round" DESC, r."updatedAt" DESC, r."id" DESC
+          ) AS rn
+        FROM "SeasonRaceTeamRoster" r
+        INNER JOIN "Race" rr ON rr."id" = r."raceId"
+        WHERE r."seasonId" = ${seasonId}
+          AND rr."round" <= ${race.round}
+      )
+      SELECT "teamId", "raceRound", "raceName", "updatedAt"
+      FROM ranked_rosters
+      WHERE rn = 1
+    `;
+    const rosterMetaByTeam = new Map(
+      latestRosterByTeam.map((row) =>
+        [
+          row.teamId,
+          { updatedAt: row.updatedAt, round: row.raceRound, raceName: row.raceName },
+        ] as const,
+      ),
+    );
+
     for (const assignment of activeAssignments) {
-      if (!assignment.team || !assignment.teamId) continue;
+      if (!assignment.teamId) continue;
       const existing = teamsMap.get(assignment.teamId) ?? {
-        teamId: assignment.team.id,
-        teamName: assignment.team.name,
+        teamId: assignment.teamId,
+        teamName: assignment.teamName,
         drivers: [],
         mainDriverIds: [],
         reserveDriverIds: [],
+        lastRosterUpdatedAt: rosterMetaByTeam.get(assignment.teamId)?.updatedAt ?? null,
+        lastRosterRound: rosterMetaByTeam.get(assignment.teamId)?.round ?? null,
+        lastRosterRaceName: rosterMetaByTeam.get(assignment.teamId)?.raceName ?? null,
       };
 
-      existing.drivers.push(assignment.driver);
+      existing.drivers.push({
+        id: assignment.driverId,
+        uuid: assignment.driverUuid,
+        currentName: assignment.driverName,
+      });
       teamsMap.set(assignment.teamId, existing);
+    }
+
+    const rosterOnlyTeamIds = Array.from(
+      new Set(rosterRows.map((row) => row.teamId).filter((teamId) => !teamsMap.has(teamId))),
+    );
+    if (rosterOnlyTeamIds.length > 0) {
+      const rosterOnlyTeams = await prisma.team.findMany({
+        where: {
+          id: { in: rosterOnlyTeamIds },
+          leagueId: id,
+        },
+        select: { id: true, name: true },
+      });
+
+      for (const team of rosterOnlyTeams) {
+        teamsMap.set(team.id, {
+          teamId: team.id,
+          teamName: team.name,
+          drivers: [],
+          mainDriverIds: [],
+          reserveDriverIds: [],
+          lastRosterUpdatedAt: rosterMetaByTeam.get(team.id)?.updatedAt ?? null,
+          lastRosterRound: rosterMetaByTeam.get(team.id)?.round ?? null,
+          lastRosterRaceName: rosterMetaByTeam.get(team.id)?.raceName ?? null,
+        });
+      }
     }
 
     for (const row of rosterRows) {
@@ -476,6 +621,17 @@ export default async function RaceDetailsPage({
       },
     },
   });
+
+  const seasonRoundsRows = await prisma.race.findMany({
+    where: { seasonId },
+    select: { round: true, name: true },
+    orderBy: { round: "asc" },
+  });
+  const seasonRounds = seasonRoundsRows.map((entry) => entry.round);
+  const seasonRoundOptions = seasonRoundsRows.map((entry) => ({
+    round: entry.round,
+    raceName: entry.name,
+  }));
 
   try {
     existingRaceBonuses = await prisma.$queryRaw<
@@ -665,6 +821,8 @@ export default async function RaceDetailsPage({
         leagueId={id}
         seasonId={seasonId}
         seasonStatus={race.season.status}
+        seasonRounds={seasonRounds}
+        seasonRoundOptions={seasonRoundOptions}
         unregisteredPlayers={unregisteredPlayers}
         roundPreviewByName={roundPreviewByName}
         teamScoringMode={teamScoringMode}

@@ -20,7 +20,7 @@ import {
   getReverseGridPoleWinnerUuidFromEvent,
   getRoundHeatFromEventCache,
 } from "@/lib/leagues/importHelpers";
-import { calculateStandings } from "@/lib/leagues/importActions";
+import { reprocessSeasonStandings } from "@/lib/leagues/importActions";
 import { getSeasonReverseGridConfig, isRaceRound } from "@/lib/leagues/reverseGrid";
 import {
   createRaceSchema,
@@ -301,6 +301,7 @@ export async function saveRaceTeamRoster(
   teamId: string,
   mainDriverIds: string[],
   reserveDriverIds: string[],
+  effectiveRound?: number,
 ) {
   try {
 
@@ -335,11 +336,37 @@ export async function saveRaceTeamRoster(
 
     const race = await prisma.race.findFirst({
       where: { id: raceId, seasonId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, round: true },
     });
 
     if (!race) {
       return { success: false, error: "Corrida não encontrada" };
+    }
+
+    const targetRound = effectiveRound ?? race.round;
+    if (!Number.isInteger(targetRound) || targetRound < 1) {
+      return { success: false, error: "Rodada de vigência inválida" };
+    }
+
+    const targetRoundRace = await prisma.race.findFirst({
+      where: { seasonId, round: targetRound },
+      select: { id: true },
+    });
+    if (!targetRoundRace) {
+      return { success: false, error: "Rodada de vigência inválida" };
+    }
+
+    const targetRaces = await prisma.race.findMany({
+      where: {
+        seasonId,
+        round: { gte: targetRound },
+      },
+      select: { id: true, round: true },
+      orderBy: { round: "asc" },
+    });
+
+    if (targetRaces.length === 0) {
+      return { success: false, error: "Rodada de vigência inválida" };
     }
 
     const team = await prisma.team.findFirst({
@@ -359,14 +386,33 @@ export async function saveRaceTeamRoster(
     }
 
     const allRosterDriverIds = [...uniqueMain, ...uniqueReserve];
-    const activeAssignments = await prisma.seasonTeamAssignment.findMany({
-      where: {
-        seasonId,
-        teamId,
-        leftAt: null,
-      },
-      select: { driverId: true },
-    });
+    const activeAssignments = await prisma.$queryRaw<Array<{ driverId: string }>>`
+      WITH active_assignments AS (
+        SELECT
+          "id",
+          "driverId",
+          "teamId",
+          "joinedAt"
+        FROM "SeasonTeamAssignment"
+        WHERE "seasonId" = ${seasonId}
+          AND COALESCE("effectiveFromRound", 1) <= ${targetRound}
+          AND ("effectiveToRound" IS NULL OR "effectiveToRound" >= ${targetRound})
+      ),
+      latest_assignments AS (
+        SELECT
+          aa."driverId",
+          aa."teamId",
+          ROW_NUMBER() OVER (
+            PARTITION BY aa."driverId"
+            ORDER BY (aa."teamId" IS NULL) ASC, aa."joinedAt" DESC, aa."id" DESC
+          ) AS rn
+        FROM active_assignments aa
+      )
+      SELECT "driverId"
+      FROM latest_assignments
+      WHERE rn = 1
+        AND "teamId" = ${teamId}
+    `;
 
     const activeSet = new Set(activeAssignments.map((a) => a.driverId));
     for (const driverId of allRosterDriverIds) {
@@ -379,6 +425,7 @@ export async function saveRaceTeamRoster(
     }
 
     if (allRosterDriverIds.length > 0) {
+      const targetRaceIds = targetRaces.map((entry) => entry.id);
       const conflictingRosterRows = await prisma.$queryRaw<
         Array<{ driverId: string; teamId: string }>
       >`
@@ -386,7 +433,7 @@ export async function saveRaceTeamRoster(
         FROM "SeasonRaceTeamRoster" r
         INNER JOIN "SeasonRaceTeamRosterItem" i ON i."rosterId" = r."id"
         WHERE r."seasonId" = ${seasonId}
-          AND r."raceId" = ${raceId}
+          AND r."raceId" IN (${Prisma.join(targetRaceIds)})
           AND r."teamId" <> ${teamId}
           AND i."driverId" IN (${Prisma.join(allRosterDriverIds)})
       `;
@@ -401,58 +448,58 @@ export async function saveRaceTeamRoster(
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        DELETE FROM "SeasonRaceTeamRosterItem"
-        WHERE "rosterId" IN (
-          SELECT "id" FROM "SeasonRaceTeamRoster"
-          WHERE "seasonId" = ${seasonId}
-            AND "raceId" = ${raceId}
-            AND "teamId" = ${teamId}
-        )
-      `;
-
-      await tx.$executeRaw`
-        DELETE FROM "SeasonRaceTeamRoster"
-        WHERE "seasonId" = ${seasonId}
-          AND "raceId" = ${raceId}
-          AND "teamId" = ${teamId}
-      `;
-
-      if (allRosterDriverIds.length > 0) {
-        const rosterId = `${seasonId}_${raceId}_${teamId}`;
-
+      for (const targetRace of targetRaces) {
         await tx.$executeRaw`
-          INSERT INTO "SeasonRaceTeamRoster"
-            ("id", "seasonId", "raceId", "teamId", "createdAt", "updatedAt")
-          VALUES
-            (${rosterId}, ${seasonId}, ${raceId}, ${teamId}, NOW(), NOW())
+          DELETE FROM "SeasonRaceTeamRosterItem"
+          WHERE "rosterId" IN (
+            SELECT "id" FROM "SeasonRaceTeamRoster"
+            WHERE "seasonId" = ${seasonId}
+              AND "raceId" = ${targetRace.id}
+              AND "teamId" = ${teamId}
+          )
         `;
 
-        for (let i = 0; i < uniqueMain.length; i++) {
-          const driverId = uniqueMain[i];
-          await tx.$executeRaw`
-            INSERT INTO "SeasonRaceTeamRosterItem"
-              ("id", "rosterId", "driverId", "role", "priority", "createdAt", "updatedAt")
-            VALUES
-              (${`${rosterId}_main_${driverId}_${i + 1}`}, ${rosterId}, ${driverId}, CAST('MAIN' AS "RosterDriverRole"), ${i + 1}, NOW(), NOW())
-          `;
-        }
+        await tx.$executeRaw`
+          DELETE FROM "SeasonRaceTeamRoster"
+          WHERE "seasonId" = ${seasonId}
+            AND "raceId" = ${targetRace.id}
+            AND "teamId" = ${teamId}
+        `;
 
-        for (let i = 0; i < uniqueReserve.length; i++) {
-          const driverId = uniqueReserve[i];
+        if (allRosterDriverIds.length > 0) {
+          const rosterId = `${seasonId}_${targetRace.id}_${teamId}`;
+
           await tx.$executeRaw`
-            INSERT INTO "SeasonRaceTeamRosterItem"
-              ("id", "rosterId", "driverId", "role", "priority", "createdAt", "updatedAt")
+            INSERT INTO "SeasonRaceTeamRoster"
+              ("id", "seasonId", "raceId", "teamId", "createdAt", "updatedAt")
             VALUES
-              (${`${rosterId}_reserve_${driverId}_${i + 1}`}, ${rosterId}, ${driverId}, CAST('RESERVE' AS "RosterDriverRole"), ${i + 1}, NOW(), NOW())
+              (${rosterId}, ${seasonId}, ${targetRace.id}, ${teamId}, NOW(), NOW())
           `;
+
+          for (let i = 0; i < uniqueMain.length; i++) {
+            const driverId = uniqueMain[i];
+            await tx.$executeRaw`
+              INSERT INTO "SeasonRaceTeamRosterItem"
+                ("id", "rosterId", "driverId", "role", "priority", "createdAt", "updatedAt")
+              VALUES
+                (${`${rosterId}_main_${driverId}_${i + 1}`}, ${rosterId}, ${driverId}, CAST('MAIN' AS "RosterDriverRole"), ${i + 1}, NOW(), NOW())
+            `;
+          }
+
+          for (let i = 0; i < uniqueReserve.length; i++) {
+            const driverId = uniqueReserve[i];
+            await tx.$executeRaw`
+              INSERT INTO "SeasonRaceTeamRosterItem"
+                ("id", "rosterId", "driverId", "role", "priority", "createdAt", "updatedAt")
+              VALUES
+                (${`${rosterId}_reserve_${driverId}_${i + 1}`}, ${rosterId}, ${driverId}, CAST('RESERVE' AS "RosterDriverRole"), ${i + 1}, NOW(), NOW())
+            `;
+          }
         }
       }
     });
 
-    if (race.status === "COMPLETED") {
-      await calculateStandings(seasonId);
-    }
+    await reprocessSeasonStandings(seasonId, "RACE_UPDATE");
 
     revalidatePath(`/admin/leagues/${leagueId}/seasons/${seasonId}/races/${raceId}`);
     revalidatePath(`/admin/leagues/${leagueId}/seasons/${seasonId}/standings`);
@@ -1106,7 +1153,7 @@ export async function configureRound(
           });
         }
 
-        await calculateStandings(round.race.season.id);
+        await reprocessSeasonStandings(round.race.season.id, "RACE_UPDATE");
         revalidatePath(
           `/admin/leagues/${round.race.season.league.id}/seasons/${round.race.season.id}/standings`,
         );
@@ -1537,7 +1584,7 @@ export async function importRaceResults(
     }
 
     // Recalculate both driver and team standings after the transaction commits
-    await calculateStandings(race.season.id);
+    await reprocessSeasonStandings(race.season.id, "RACE_UPDATE");
 
     revalidatePath(
       `/admin/leagues/${race.season.league.id}/seasons/${race.season.id}/races/${raceId}`,
@@ -1991,7 +2038,7 @@ export async function createManualFinalRound(input: CreateManualFinalRoundInput)
       return { id: createdRoundId, name: manualRoundName };
     });
 
-    await calculateStandings(race.season.id);
+    await reprocessSeasonStandings(race.season.id, "RACE_UPDATE");
 
     revalidatePath(
       `/admin/leagues/${league.id}/seasons/${race.season.id}/races/${race.id}`,
@@ -2197,7 +2244,7 @@ export async function addManualRoundDriver(input: AddManualRoundDriverInput) {
       });
     });
 
-    await calculateStandings(eventRound.race.season.id);
+    await reprocessSeasonStandings(eventRound.race.season.id, "RACE_UPDATE");
 
     revalidatePath(
       `/admin/leagues/${league.id}/seasons/${eventRound.race.season.id}/races/${eventRound.race.id}`,
@@ -2516,7 +2563,7 @@ export async function applyManualFinalRoundPositions(
       timeout: 30000,
     });
 
-    await calculateStandings(eventRound.race.season.id);
+    await reprocessSeasonStandings(eventRound.race.season.id, "RACE_UPDATE");
 
     revalidatePath(
       `/admin/leagues/${league.id}/seasons/${eventRound.race.season.id}/races/${eventRound.race.id}`,
@@ -2632,7 +2679,7 @@ export async function setRoundResultDisqualification(
       timeout: 120000,
     });
 
-    await calculateStandings(race.season.id);
+    await reprocessSeasonStandings(race.season.id, "RACE_UPDATE");
 
     revalidatePath(
       `/admin/leagues/${league.id}/seasons/${race.season.id}/races/${race.id}`,
@@ -2746,7 +2793,7 @@ export async function setRoundResultFastestLap(
       timeout: 120000,
     });
 
-    await calculateStandings(race.season.id);
+    await reprocessSeasonStandings(race.season.id, "RACE_UPDATE");
 
     revalidatePath(
       `/admin/leagues/${league.id}/seasons/${race.season.id}/races/${race.id}`,

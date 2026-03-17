@@ -57,6 +57,9 @@ interface RaceDetailsClientProps {
       drivers: Array<{ id: string; uuid: string; currentName: string | null }>;
       mainDriverIds: string[];
       reserveDriverIds: string[];
+      lastRosterUpdatedAt: Date | string | null;
+      lastRosterRound: number | null;
+      lastRosterRaceName: string | null;
     }>;
   };
   unregisteredPlayers?: { uuid: string; name: string }[];
@@ -76,6 +79,8 @@ interface RaceDetailsClientProps {
     uuid: string;
     name: string;
   }>;
+  seasonRounds?: number[];
+  seasonRoundOptions?: Array<{ round: number; raceName: string }>;
 }
 
 type ImportedResult = {
@@ -121,6 +126,7 @@ type EventRoundClient = {
 type RaceClient = {
   id: string;
   seasonId: string;
+  round: number;
   apiEventId: string | null;
   reverseGridEnabled?: boolean;
   eventRounds: EventRoundClient[];
@@ -254,6 +260,8 @@ export function RaceDetailsClient({
   roundPreviewByName = {},
   existingRaceBonuses = [],
   seasonAssignedDrivers = [],
+  seasonRounds = [],
+  seasonRoundOptions = [],
 }: RaceDetailsClientProps) {
   const isSeasonActive = seasonStatus === "ACTIVE";
   const router = useRouter();
@@ -318,6 +326,9 @@ export function RaceDetailsClient({
       return initial;
     });
   const [savingRosterTeamId, setSavingRosterTeamId] = useState<string | null>(null);
+  const [isRosterRoundModalOpen, setIsRosterRoundModalOpen] = useState(false);
+  const [pendingRosterTeamId, setPendingRosterTeamId] = useState<string | null>(null);
+  const [pendingRosterRound, setPendingRosterRound] = useState<number>(race.round);
   const [isImportingResults, setIsImportingResults] = useState(false);
   const [showBonusConfig, setShowBonusConfig] = useState(false);
   const [importBonusReason, setImportBonusReason] = useState("");
@@ -363,8 +374,62 @@ export function RaceDetailsClient({
 
   const isSlotMulliganMode =
     teamScoringMode === "SLOT_MULLIGAN" && slotRosterConfig?.enabled;
+
+  const formatRosterUpdatedAt = (value: Date | string | null): string => {
+    if (!value) return "Nunca definido";
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "Nunca definido";
+    return date.toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const getRosterBaseLabel = (team: {
+    lastRosterRaceName: string | null;
+    lastRosterRound: number | null;
+  }): string => {
+    if (team.lastRosterRaceName) {
+      return `Roster base: ${team.lastRosterRaceName}`;
+    }
+    if (team.lastRosterRound) {
+      return `Roster base: rodada ${team.lastRosterRound}`;
+    }
+    return "Roster base: ainda nao definido";
+  };
   const isReverseGridActive = Boolean(race.reverseGridEnabled);
   const canToggleReverseGrid = isAdmin && isSeasonActive && seasonReverseGridEnabled;
+
+  const resolvedSeasonRoundOptions =
+    seasonRoundOptions.length > 0
+      ? [...seasonRoundOptions].sort((a, b) => a.round - b.round)
+      : seasonRounds.length > 0
+        ? [...seasonRounds].sort((a, b) => a - b).map((round) => ({
+            round,
+            raceName: `Rodada ${round}`,
+          }))
+        : [{ round: race.round, raceName: race.name }];
+
+  const openRosterRoundModal = (teamId: string) => {
+    setPendingRosterTeamId(teamId);
+    setPendingRosterRound(race.round);
+    setIsRosterRoundModalOpen(true);
+  };
+
+  const closeRosterRoundModal = () => {
+    if (savingRosterTeamId) return;
+    setIsRosterRoundModalOpen(false);
+    setPendingRosterTeamId(null);
+  };
+
+  const pendingRosterTeamName =
+    pendingRosterTeamId
+      ? slotRosterConfig?.teams.find((team) => team.teamId === pendingRosterTeamId)?.teamName ??
+        "Equipe"
+      : "Equipe";
   const selectedScoringRound = selectPrimaryScoringRound(race.eventRounds);
   const scoringRoundPreview = selectedScoringRound
     ? roundPreviewByName[selectedScoringRound.apiRoundName] ?? []
@@ -512,21 +577,39 @@ export function RaceDetailsClient({
     });
   };
 
-  const handleSaveRoster = async (teamId: string) => {
+  const handleSaveRoster = async () => {
+    if (!pendingRosterTeamId) return;
     try {
-      const draft = rosterDraft[teamId] ?? { mainDriverIds: [], reserveDriverIds: [] };
-      setSavingRosterTeamId(teamId);
+      const draft = rosterDraft[pendingRosterTeamId] ?? {
+        mainDriverIds: [],
+        reserveDriverIds: [],
+      };
+      const parsedRound = Number(pendingRosterRound);
+      if (!Number.isInteger(parsedRound) || parsedRound < 1) {
+        toast.error("Rodada de vigência inválida");
+        return;
+      }
+
+      if (seasonRounds.length > 0 && !seasonRounds.includes(parsedRound)) {
+        toast.error("Rodada de vigência inválida para esta temporada");
+        return;
+      }
+
+      setSavingRosterTeamId(pendingRosterTeamId);
 
       const result = await saveRaceTeamRoster(
         race.seasonId,
         race.id,
-        teamId,
+        pendingRosterTeamId,
         draft.mainDriverIds,
         draft.reserveDriverIds,
+        parsedRound,
       );
 
       if (result.success) {
         toast.success("Roster salvo com sucesso");
+        setIsRosterRoundModalOpen(false);
+        setPendingRosterTeamId(null);
         router.refresh();
       } else {
         toast.error(result.error || "Erro ao salvar roster");
@@ -1229,6 +1312,10 @@ export function RaceDetailsClient({
                   <div className="px-4 py-3 bg-zinc-950/50 border-b border-zinc-800 flex items-center justify-between">
                     <div>
                       <p className="text-white font-medium">{team.teamName}</p>
+                      <p className="text-xs text-zinc-500">{getRosterBaseLabel(team)}</p>
+                      <p className="text-xs text-zinc-500">
+                        Ultima edicao: {formatRosterUpdatedAt(team.lastRosterUpdatedAt)}
+                      </p>
                       <p className="text-xs text-zinc-500">
                         Main: {draft.mainDriverIds.length}/3 • Reserve: {draft.reserveDriverIds.length}/2
                       </p>
@@ -1239,7 +1326,7 @@ export function RaceDetailsClient({
 
                     <button
                       type="button"
-                      onClick={() => handleSaveRoster(team.teamId)}
+                      onClick={() => openRosterRoundModal(team.teamId)}
                       disabled={savingRosterTeamId === team.teamId}
                       className="px-3 py-1.5 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 rounded-lg text-xs font-semibold disabled:opacity-50"
                     >
@@ -2253,6 +2340,76 @@ export function RaceDetailsClient({
           </table>
         </div>
       </div>
+      {isRosterRoundModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-white font-mono">Vigência do Roster</h3>
+                <p className="text-sm text-zinc-400 mt-1">{pendingRosterTeamName}</p>
+              </div>
+              <button
+                type="button"
+                className="p-2 rounded-lg hover:bg-zinc-800 transition-colors"
+                onClick={closeRosterRoundModal}
+                disabled={Boolean(savingRosterTeamId)}
+              >
+                <X size={18} className="text-zinc-400" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-zinc-300">
+                Escolha a partir de qual corrida este roster deve valer. A alteração será
+                aplicada de forma inclusiva dessa rodada em diante.
+              </p>
+
+              <label className="block">
+                <span className="text-xs font-semibold tracking-wide uppercase text-zinc-500">
+                  Rodada de vigência
+                </span>
+                <select
+                  value={pendingRosterRound}
+                  onChange={(event) => setPendingRosterRound(Number(event.target.value))}
+                  className="mt-2 w-full px-3 py-2.5 rounded-lg bg-zinc-950 border border-zinc-700 text-zinc-100 focus:outline-none focus:border-cyan-500/50"
+                >
+                  {resolvedSeasonRoundOptions.map((option) => (
+                    <option key={option.round} value={option.round}>
+                      Rodada {option.round} - {option.raceName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <p className="text-xs text-zinc-500">
+                Dica: use a rodada da corrida atual para mudanças imediatas, ou selecione uma
+                rodada futura para deixar a alteração programada.
+              </p>
+            </div>
+
+            <div className="px-6 py-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeRosterRoundModal}
+                disabled={Boolean(savingRosterTeamId)}
+                className="px-4 py-2 text-zinc-400 hover:text-white transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveRoster}
+                disabled={Boolean(savingRosterTeamId)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-semibold rounded-lg transition-colors disabled:opacity-50"
+              >
+                {savingRosterTeamId ? <Loader2 size={16} className="animate-spin" /> : null}
+                {savingRosterTeamId ? "Salvando..." : "Salvar roster"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-5xl max-h-[88vh] rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden flex flex-col">
