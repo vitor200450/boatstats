@@ -12,7 +12,6 @@ import {
 } from "@/lib/validations/leagues";
 import { F1_SPRINT_POINTS } from "@/lib/leagues/pointsSystem";
 import { reprocessSeasonStandings } from "@/lib/leagues/importActions";
-import { normalizeLegacyAssignmentRoundsForSeason } from "@/lib/leagues/assignmentNormalization";
 
 function getSeasonTeamScoringMode(pointsSystem: unknown):
   | "STANDARD"
@@ -531,13 +530,6 @@ export async function getSeasonById(seasonId: string) {
       return { success: false, error: "Temporada não encontrada" };
     }
 
-    const normalization = await normalizeLegacyAssignmentRoundsForSeason(seasonId);
-    if (normalization.updatedCount > 0) {
-      console.info(
-        `[LegacyAssignments] Backfilled ${normalization.updatedCount} drivers to round ${normalization.firstSeasonRound} in season ${seasonId}`,
-      );
-    }
-
     // Check access
     const session = await auth();
     if (!session?.user) {
@@ -594,13 +586,6 @@ export async function updateSeason(seasonId: string, data: UpdateSeasonInput) {
 
     if (!season) {
       return { success: false, error: "Temporada não encontrada" };
-    }
-
-    const normalization = await normalizeLegacyAssignmentRoundsForSeason(seasonId);
-    if (normalization.updatedCount > 0) {
-      console.info(
-        `[LegacyAssignments] Backfilled ${normalization.updatedCount} drivers to round ${normalization.firstSeasonRound} in season ${seasonId}`,
-      );
     }
 
     const session = await auth();

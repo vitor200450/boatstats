@@ -133,6 +133,8 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
         driverId: true,
         joinedAt: true,
         leftAt: true,
+        effectiveFromRound: true,
+        effectiveToRound: true,
         driver: {
           select: {
             uuid: true,
@@ -279,6 +281,8 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
             driverId: assignment.driverId,
             joinedAt: assignment.joinedAt,
             leftAt: assignment.leftAt,
+            effectiveFromRound: assignment.effectiveFromRound,
+            effectiveToRound: assignment.effectiveToRound,
           },
         ]
       : [],

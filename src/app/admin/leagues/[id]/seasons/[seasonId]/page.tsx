@@ -620,9 +620,9 @@ export default async function SeasonPage({ params }: SeasonPageProps) {
                   <RotateCcw className="w-5 h-5 text-cyan-400" />
                 </div>
                 <div>
-                  <h3 className="text-white font-medium">Recalcular Classificação</h3>
+                  <h3 className="text-white font-medium">Recalcular Pontos + Classificação</h3>
                   <p className="text-sm text-zinc-400">
-                    Reprocessa os pontos de pilotos e equipes da temporada
+                    Recalcula os pontos dos resultados importados e reprocessa a classificação da temporada
                   </p>
                 </div>
               </div>

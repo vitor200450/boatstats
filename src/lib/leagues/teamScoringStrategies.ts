@@ -198,6 +198,7 @@ export function calculateTeamStatsByMode(params: {
   if (mode === "DEPTH_CHART") {
     return calculateDepthChartTeamStats({
       races,
+      teamAssignments,
       depthChartEntries,
       seasonSprintConfig,
     });
@@ -380,7 +381,14 @@ export function calculateTeamRaceContributorsByMode(params: {
       }
     }
   } else if (mode === "DEPTH_CHART") {
+    const hasTemporalAssignments = teamAssignments.length > 0;
+
     for (const race of races) {
+      const raceReferenceDate = race.scheduledDate ?? race.createdAt;
+      const raceDriverTeams = hasTemporalAssignments
+        ? resolveRaceDriverTeams(teamAssignments, race.round, raceReferenceDate)
+        : null;
+
       const depthChartByTeam = getDepthChartSnapshotByTeam(depthChartEntries, race.round);
 
       const raceParticipants = new Set<string>();
@@ -403,6 +411,7 @@ export function calculateTeamRaceContributorsByMode(params: {
         let selectedCount = 0;
         for (const entry of entries) {
           if (selectedCount >= 3) break;
+          if (raceDriverTeams && raceDriverTeams.get(entry.driverId) !== teamId) continue;
           if (!raceParticipants.has(entry.driverId)) continue;
           if ((racePointsByDriver.get(entry.driverId) ?? 0) <= 0) continue;
           if (!countingDriverToTeam.has(entry.driverId)) {
@@ -704,14 +713,21 @@ function sumLowest(
 
 function calculateDepthChartTeamStats(params: {
   races: RaceLike[];
+  teamAssignments: AssignmentLike[];
   depthChartEntries: DepthChartEntryLike[];
   seasonSprintConfig: SeasonSprintConfig;
 }): Map<string, TeamStats> {
-  const { races, depthChartEntries, seasonSprintConfig } = params;
+  const { races, teamAssignments, depthChartEntries, seasonSprintConfig } = params;
+  const hasTemporalAssignments = teamAssignments.length > 0;
 
   const teamStats = new Map<string, TeamStats>();
 
   for (const race of races) {
+    const raceReferenceDate = race.scheduledDate ?? race.createdAt;
+    const raceDriverTeams = hasTemporalAssignments
+      ? resolveRaceDriverTeams(teamAssignments, race.round, raceReferenceDate)
+      : null;
+
     const depthChartByTeam = getDepthChartSnapshotByTeam(depthChartEntries, race.round);
     const raceParticipants = new Set<string>();
     const racePointsByDriver = new Map<string, number>();
@@ -733,6 +749,7 @@ function calculateDepthChartTeamStats(params: {
 
       for (const entry of entries) {
         if (selectedCount >= 3) break;
+        if (raceDriverTeams && raceDriverTeams.get(entry.driverId) !== teamId) continue;
         if (!raceParticipants.has(entry.driverId)) continue;
         if ((racePointsByDriver.get(entry.driverId) ?? 0) <= 0) continue;
 

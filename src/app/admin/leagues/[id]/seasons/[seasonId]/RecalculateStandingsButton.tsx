@@ -26,12 +26,12 @@ export function RecalculateStandingsButton({
     if (result.success) {
       setStatus({
         type: "success",
-        message: "Pontos e classificação recalculados com sucesso.",
+        message: "Pontos dos resultados e classificação recalculados com sucesso.",
       });
     } else {
       setStatus({
         type: "error",
-        message: result.error || "Erro ao recalcular pontos/classificação.",
+        message: result.error || "Erro ao recalcular pontos e classificação.",
       });
     }
 
@@ -63,7 +63,7 @@ export function RecalculateStandingsButton({
         ) : (
           <>
             <RotateCcw className="w-4 h-4" />
-            Recalcular
+            Recalcular pontos + classificação
           </>
         )}
       </button>

@@ -712,7 +712,7 @@ export function StandingsClient({
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-500/30 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/15 disabled:opacity-60 disabled:cursor-not-allowed text-xs font-mono"
           >
             <RefreshCw size={14} className={reprocessing ? "animate-spin" : ""} />
-            {reprocessing ? "Reprocessando..." : "Reprocessar temporada"}
+            {reprocessing ? "Reprocessando..." : "Reprocessar classificação"}
           </button>
         </div>
 

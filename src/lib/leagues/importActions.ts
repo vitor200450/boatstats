@@ -35,7 +35,6 @@ import {
   reprocessSeasonStandingsWithLock,
   type SeasonReprocessReason,
 } from "./reprocessStandings";
-import { normalizeLegacyAssignmentRoundsForSeason } from "./assignmentNormalization";
 
 export async function reprocessSeasonStandings(
   seasonId: string,
@@ -44,15 +43,6 @@ export async function reprocessSeasonStandings(
     calculateStandingsFn?: (seasonId: string) => Promise<{ success: boolean; error?: string }>;
   },
 ): Promise<{ success: boolean; error?: string; durationMs?: number; reason?: SeasonReprocessReason }> {
-  if (!deps?.calculateStandingsFn) {
-    const normalization = await normalizeLegacyAssignmentRoundsForSeason(seasonId);
-    if (normalization.updatedCount > 0) {
-      console.info(
-        `[LegacyAssignments] Backfilled ${normalization.updatedCount} drivers to round ${normalization.firstSeasonRound} before reprocess season=${seasonId}`,
-      );
-    }
-  }
-
   const calculateStandingsFn = deps?.calculateStandingsFn ?? calculateStandings;
   return reprocessSeasonStandingsWithLock(seasonId, reason, {
     calculateStandingsFn,
