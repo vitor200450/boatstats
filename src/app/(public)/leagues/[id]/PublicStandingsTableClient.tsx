@@ -37,6 +37,32 @@ type RaceRow = {
   contributors?: Array<{ name: string; uuid: string | null; points: number }>;
 };
 
+function resolveAvatarSeed(uuid: string | null | undefined, name: string | null | undefined): string {
+  const uuidValue = uuid?.trim() ?? "";
+  const nameValue = name?.trim() ?? "";
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  if (uuidPattern.test(uuidValue)) return uuidValue;
+  if (nameValue) return nameValue;
+  if (uuidValue) return uuidValue;
+  return "Steve";
+}
+
+function resolveDriverProfileSlug(
+  uuid: string | null | undefined,
+  name: string | null | undefined,
+): string {
+  const uuidValue = uuid?.trim() ?? "";
+  if (uuidValue && !uuidValue.toLowerCase().startsWith("legacy-")) {
+    return uuidValue;
+  }
+
+  const nameValue = name?.trim() ?? "";
+  if (nameValue) return nameValue;
+  return uuidValue;
+}
+
 function compareRaceLabels(a: string, b: string): number {
   const aMatch = /^R(\d+)\b/.exec(a);
   const bMatch = /^R(\d+)\b/.exec(b);
@@ -56,6 +82,7 @@ function toRaceRows(
     string,
     Record<string, Array<{ name: string; uuid: string | null; points: number }>>
   >,
+  hideZeroNoDriverRaces = false,
 ): RaceRow[] {
   if (!racePoints || typeof racePoints !== "object") return [];
   const racePointsRecord = racePoints as Record<string, Record<string, number>>;
@@ -71,26 +98,27 @@ function toRaceRows(
       const d1 = raceData.D1 ?? 0;
       const d2 = raceData.D2 ?? 0;
       const d3 = raceData.D3 ?? 0;
-      const slotNames = slotNamesByRaceId?.[raceId];
-      const scoredContributors = [
-        { slot: "D1" as const, points: d1 },
-        { slot: "D2" as const, points: d2 },
-        { slot: "D3" as const, points: d3 },
-      ].filter((entry) => entry.points > 0);
+      const totalContributors = roundContributorsByRaceId?.[raceId]?.TOTAL ?? [];
+      const detail = "";
 
-      const detail =
-        scoredContributors.length > 0
-          ? scoredContributors
-              .map(({ slot, points }) => `${slotNames?.[slot] ?? slot} ${points}`)
-              .join(" • ")
-          : `D1 ${d1} • D2 ${d2} • D3 ${d3}`;
+      const totalPoints = raceData.total ?? d1 + d2 + d3;
+      if (hideZeroNoDriverRaces && totalPoints === 0 && totalContributors.length === 0) {
+        continue;
+      }
 
       rows.push({
         raceId,
         label: raceLabels[raceId] || raceId.slice(-6),
-        total: raceData.total ?? d1 + d2 + d3,
+        total: totalPoints,
         detail,
         position: racePositionsByRaceId?.[raceId],
+        contributors: totalContributors
+          .map((entry) => ({
+            name: entry.name,
+            uuid: entry.uuid,
+            points: entry.points,
+          }))
+          .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name)),
       });
       continue;
     }
@@ -99,18 +127,7 @@ function toRaceRows(
     const total = entries.reduce((acc, [, value]) => acc + value, 0);
     const detail = entries
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([roundName]) => {
-        const contributors = roundContributorsByRaceId?.[raceId]?.[roundName] ?? [];
-        if (contributors.length === 0) {
-          return roundName;
-        }
-
-        const contributorsLabel = contributors
-          .map((entry) => `${entry.name} ${entry.points}`)
-          .join(", ");
-
-        return `${roundName}: ${contributorsLabel}`;
-      })
+      .map(([roundName]) => roundName)
       .join(" • ");
 
     const contributorsByName = new Map<string, { uuid: string | null; points: number }>();
@@ -128,6 +145,10 @@ function toRaceRows(
     const contributors = Array.from(contributorsByName.entries())
       .map(([name, meta]) => ({ name, uuid: meta.uuid, points: meta.points }))
       .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+
+    if (hideZeroNoDriverRaces && total === 0 && contributors.length === 0) {
+      continue;
+    }
 
     rows.push({
       raceId,
@@ -247,15 +268,15 @@ export function PublicStandingsTableClient({
                       {standing.driver ? (
                         <>
                           <img
-                            src={`https://mc-heads.net/avatar/${standing.driver.uuid}/32`}
+                            src={`https://mc-heads.net/avatar/${resolveAvatarSeed(standing.driver.uuid, standing.driver.currentName)}/32`}
                             alt={standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                             className="w-8 h-8 rounded-md shrink-0 bg-zinc-800"
                           />
                           <div className="min-w-0">
-                            <Link
-                              href={`/driver/${standing.driver.uuid}`}
-                              className="block truncate text-white font-medium hover:text-cyan-400 transition-colors"
-                            >
+                              <Link
+                               href={`/driver/${encodeURIComponent(resolveDriverProfileSlug(standing.driver.uuid, standing.driver.currentName))}`}
+                                className="block truncate text-white font-medium hover:text-cyan-400 transition-colors"
+                              >
                               {standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                             </Link>
                             {team && (
@@ -337,13 +358,13 @@ export function PublicStandingsTableClient({
                           {standing.driver ? (
                             <>
                               <img
-                                src={`https://mc-heads.net/avatar/${standing.driver.uuid}/32`}
+                                src={`https://mc-heads.net/avatar/${resolveAvatarSeed(standing.driver.uuid, standing.driver.currentName)}/32`}
                                  alt={standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
                                 className="w-7 h-7 rounded-md shrink-0 bg-zinc-800"
                               />
                               <div>
                                 <Link
-                                  href={`/driver/${standing.driver.uuid}`}
+                                  href={`/driver/${encodeURIComponent(resolveDriverProfileSlug(standing.driver.uuid, standing.driver.currentName))}`}
                                   className="text-white font-medium hover:text-cyan-400 transition-colors"
                                 >
                                   {standing.driver.currentName || t(locale, "public.leagueStandingsTable.unknownDriver")}
@@ -425,6 +446,7 @@ export function PublicStandingsTableClient({
               undefined,
               standing.team ? teamSlotNamesByTeamRace[standing.team.id] : undefined,
               standing.team ? teamRoundContributors[standing.team.id] : undefined,
+              true,
             );
             return (
               <div key={standing.id} className="p-4">
@@ -494,6 +516,7 @@ export function PublicStandingsTableClient({
                   undefined,
                   standing.team ? teamSlotNamesByTeamRace[standing.team.id] : undefined,
                   standing.team ? teamRoundContributors[standing.team.id] : undefined,
+                  true,
                 );
                 return (
                   <tr key={standing.id} className="transition-colors hover:bg-zinc-800/20">
@@ -678,7 +701,7 @@ function ProgressionModal({
                       >
                         {contributor.uuid ? (
                           <img
-                            src={`https://mc-heads.net/avatar/${contributor.uuid}/20`}
+                            src={`https://mc-heads.net/avatar/${resolveAvatarSeed(contributor.uuid, contributor.name)}/20`}
                             alt={contributor.name}
                             width={16}
                             height={16}

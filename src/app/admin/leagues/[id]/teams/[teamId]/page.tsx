@@ -68,6 +68,15 @@ interface Assignment {
   season: Season;
   leftAt: Date | null;
   joinedAt: Date;
+  source?: "assignment" | "depth-final";
+  depthPriority?: number;
+}
+
+interface DepthChartEntry {
+  id: string;
+  driver: Driver;
+  season: Season;
+  priority: number;
 }
 
 interface Team {
@@ -84,6 +93,7 @@ interface Team {
     admins: { userId: string }[];
   };
   assignments: Assignment[];
+  depthChartEntries?: DepthChartEntry[];
   standings: {
     id: string;
     position: number;
@@ -668,11 +678,38 @@ export default function TeamPage({ params }: TeamPageProps) {
     );
   }
 
-  const activeAssignments = team.assignments.filter((a) => !a.leftAt);
+  const liveAssignments: Assignment[] = team.assignments
+    .filter(
+      (a) =>
+        !a.leftAt &&
+        (a.season.status === "ACTIVE" || a.season.status === "DRAFT"),
+    )
+    .map((a) => ({ ...a, source: "assignment" }));
+
+  const completedDepthAssignments: Assignment[] = (team.depthChartEntries ?? [])
+    .filter(
+      (entry) =>
+        (entry.season.status === "COMPLETED" || entry.season.status === "ARCHIVED"),
+    )
+    .map((entry) => ({
+      id: `depth-${entry.id}`,
+      driver: entry.driver,
+      season: entry.season,
+      leftAt: null,
+      joinedAt: new Date(0),
+      source: "depth-final",
+      depthPriority: entry.priority,
+    }));
+
+  const activeAssignments = [...liveAssignments, ...completedDepthAssignments];
 
   // Sort assignments based on current sort settings (inside each season group)
   const sortAssignments = (assignments: Assignment[]) =>
     [...assignments].sort((a, b) => {
+    if (a.depthPriority != null && b.depthPriority != null) {
+      return a.depthPriority - b.depthPriority;
+    }
+
     if (sortBy === "name") {
       const nameA = a.driver.currentName || "";
       const nameB = b.driver.currentName || "";
@@ -1011,7 +1048,9 @@ export default function TeamPage({ params }: TeamPageProps) {
                               assignment.driver.uuid.slice(0, 8)}
                           </p>
                           <p className="text-xs text-zinc-500">
-                            Inserido em {new Date(assignment.joinedAt).toLocaleDateString("pt-BR")}
+                            {assignment.source === "depth-final" && assignment.depthPriority != null
+                              ? `Depth final: P${assignment.depthPriority}`
+                              : `Inserido em ${new Date(assignment.joinedAt).toLocaleDateString("pt-BR")}`}
                           </p>
                         </div>
 

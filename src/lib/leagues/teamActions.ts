@@ -611,6 +611,22 @@ export async function getTeamById(teamId: string) {
           },
           orderBy: { joinedAt: "desc" },
         },
+        depthChartEntries: {
+          where: {
+            effectiveToRound: null,
+          },
+          include: {
+            driver: true,
+            season: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+              },
+            },
+          },
+          orderBy: [{ seasonId: "asc" }, { priority: "asc" }],
+        },
         standings: {
           include: {
             season: {

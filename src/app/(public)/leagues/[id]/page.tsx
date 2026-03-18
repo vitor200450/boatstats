@@ -199,10 +199,17 @@ const getSeasonDepthChartEntries = unstable_cache(
         teamId: true,
         driverId: true,
         priority: true,
+        driver: {
+          select: {
+            id: true,
+            uuid: true,
+            currentName: true,
+          },
+        },
       },
     });
   },
-  ["public-season-depth-chart-v1"],
+  ["public-season-depth-chart-v2"],
   { revalidate: 60 },
 );
 
@@ -214,12 +221,14 @@ const getSeasonRaceTeamRosters = unstable_cache(
         raceId: true,
         teamId: true,
         items: {
-          where: { role: "MAIN" },
           orderBy: { priority: "asc" },
           select: {
+            role: true,
             priority: true,
             driver: {
               select: {
+                id: true,
+                uuid: true,
                 currentName: true,
               },
             },
@@ -228,7 +237,7 @@ const getSeasonRaceTeamRosters = unstable_cache(
       },
     });
   },
-  ["public-season-race-team-rosters-v1"],
+  ["public-season-race-team-rosters-v2"],
   { revalidate: 60 },
 );
 
@@ -354,6 +363,12 @@ const getSeasonTeamRoundContributors = unstable_cache(
             driverId: true,
             position: true,
             points: true,
+            driver: {
+              select: {
+                uuid: true,
+                currentName: true,
+              },
+            },
             eventRound: {
               select: {
                 raceId: true,
@@ -430,6 +445,14 @@ const getSeasonTeamRoundContributors = unstable_cache(
     const seasonSprintConfig = getSeasonSprintConfig(season?.sprintConfig ?? null);
 
     const driverMetaById = new Map<string, { name: string; uuid: string | null }>();
+    for (const row of roundResults) {
+      if (driverMetaById.has(row.driverId)) continue;
+      driverMetaById.set(row.driverId, {
+        name: row.driver?.currentName ?? row.driverId,
+        uuid: row.driver?.uuid ?? null,
+      });
+    }
+
     const teamAssignmentsForScoring = allAssignments.flatMap((assignment) => {
       if (!driverMetaById.has(assignment.driverId)) {
         driverMetaById.set(assignment.driverId, {
@@ -604,6 +627,36 @@ function translateRaceStatus(
   return status;
 }
 
+function resolveDriverProfileSlug(uuid: string | null | undefined, name: string | null | undefined): string {
+  const uuidValue = uuid?.trim() ?? "";
+  if (uuidValue && !uuidValue.toLowerCase().startsWith("legacy-")) {
+    return uuidValue;
+  }
+
+  const nameValue = name?.trim() ?? "";
+  if (nameValue) return nameValue;
+  return uuidValue;
+}
+
+const ROSTER_DRIVER_NAME_ALIASES: Record<string, string> = {
+  shelljoexd: "Shelljoe",
+  hockeyfan: "hockeyfan17",
+};
+
+function normalizePlayerNameForCompare(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function resolveRosterDisplayName(name: string | null | undefined): string | null {
+  const raw = name?.trim() ?? "";
+  if (!raw) return null;
+  return ROSTER_DRIVER_NAME_ALIASES[normalizePlayerNameForCompare(raw)] ?? raw;
+}
+
 export default async function LeagueStandingsPage({ params, searchParams }: PageProps) {
   const locale = await getRequestLocale();
   const { id: leagueIdentifier } = await params;
@@ -673,7 +726,9 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
     ? await getSeasonRacesOverview(selectedSeason.id)
     : [];
   const raceTeamRosters =
-    tab === "teams" ? await getSeasonRaceTeamRosters(selectedSeason.id) : [];
+    tab === "teams" || tab === "drivers" || tab === "rosters"
+      ? await getSeasonRaceTeamRosters(selectedSeason.id)
+      : [];
   const teamRoundContributors =
     tab === "teams" || tab === "rosters"
       ? await getSeasonTeamRoundContributors(selectedSeason.id)
@@ -683,6 +738,20 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
 
   // Build driver-team map
   const driverTeamMap: Record<string, TeamInfo> = {};
+  const teamMetaById: Record<string, TeamInfo> = {};
+  for (const standing of teamStandings) {
+    if (!standing.team) continue;
+    teamMetaById[standing.team.id] = {
+      id: standing.team.id,
+      name: standing.team.name,
+      color: standing.team.color,
+      logoUrl: standing.team.logoUrl,
+      logoScale: standing.team.logoScale,
+      logoPosX: standing.team.logoPosX,
+      logoPosY: standing.team.logoPosY,
+    };
+  }
+
   driverAssignments.forEach((assignment) => {
     if (!assignment.team) return;
     driverTeamMap[assignment.driverId] = {
@@ -695,6 +764,27 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
       logoPosY: assignment.team.logoPosY,
     };
   });
+
+  if (raceTeamRosters.length > 0) {
+    const roundByRaceId: Record<string, number> = {};
+    for (const race of raceLabelsRows) {
+      roundByRaceId[race.id] = race.round;
+    }
+
+    const sortedRosters = [...raceTeamRosters].sort(
+      (a, b) => (roundByRaceId[b.raceId] ?? 0) - (roundByRaceId[a.raceId] ?? 0),
+    );
+
+    for (const roster of sortedRosters) {
+      const team = teamMetaById[roster.teamId];
+      if (!team) continue;
+
+      for (const item of roster.items) {
+        if (driverTeamMap[item.driver.id]) continue;
+        driverTeamMap[item.driver.id] = team;
+      }
+    }
+  }
 
   const raceLabels: Record<string, string> = {};
   for (const race of raceLabelsRows) {
@@ -736,6 +826,7 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
     }
 
     for (const item of roster.items) {
+      if (item.role !== "MAIN") continue;
       const slot = priorityToSlot(item.priority);
       if (!slot) continue;
 
@@ -1062,6 +1153,141 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                 const normalizePriority = (priority: number): number =>
                   priority <= 0 ? priority + 1 : priority;
 
+                const teamInfoById: Record<string, TeamInfo> = {};
+                for (const standing of teamStandings) {
+                  if (!standing.team) continue;
+                  teamInfoById[standing.team.id] = {
+                    id: standing.team.id,
+                    name: standing.team.name,
+                    color: standing.team.color,
+                    logoUrl: standing.team.logoUrl,
+                    logoScale: standing.team.logoScale,
+                    logoPosX: standing.team.logoPosX,
+                    logoPosY: standing.team.logoPosY,
+                  };
+                }
+
+                const sourceAssignments = (() => {
+                  const raceRoundById: Record<string, number> = {};
+                  for (const race of raceLabelsRows) {
+                    raceRoundById[race.id] = race.round;
+                  }
+
+                  const latestRosterByTeam: Record<string, (typeof raceTeamRosters)[number]> = {};
+                  for (const roster of raceTeamRosters) {
+                    const current = latestRosterByTeam[roster.teamId];
+                    const rosterRound = raceRoundById[roster.raceId] ?? 0;
+                    const currentRound = current ? raceRoundById[current.raceId] ?? 0 : -1;
+                    if (!current || rosterRound >= currentRound) {
+                      latestRosterByTeam[roster.teamId] = roster;
+                    }
+                  }
+
+                  const rosterAssignments = Object.values(latestRosterByTeam).flatMap((roster) => {
+                    const team = teamInfoById[roster.teamId];
+                    if (!team) return [];
+
+                    return roster.items.map((item) => ({
+                      teamId: roster.teamId,
+                      team,
+                      role: item.role,
+                      driver: {
+                        id: item.driver.id,
+                        uuid: item.driver.uuid,
+                        currentName:
+                          resolveRosterDisplayName(item.driver.currentName) ??
+                          item.driver.currentName,
+                      },
+                    }));
+                  });
+
+                  const normalizedAssignments = teamAssignments.map((assignment) => ({
+                    ...assignment,
+                    role: null as "MAIN" | "RESERVE" | null,
+                  }));
+
+                  const depthAssignments = depthChartEntries
+                    .map((entry) => {
+                      const team = teamInfoById[entry.teamId];
+                      if (!team) return null;
+                      return {
+                        teamId: entry.teamId,
+                        team,
+                        role: (entry.priority <= 3 ? "MAIN" : "RESERVE") as
+                          | "MAIN"
+                          | "RESERVE"
+                          | null,
+                        driver: {
+                          id: entry.driver.id,
+                          uuid: entry.driver.uuid,
+                          currentName:
+                            resolveRosterDisplayName(entry.driver.currentName) ??
+                            entry.driver.currentName,
+                        },
+                      };
+                    })
+                    .filter((value): value is NonNullable<typeof value> => value !== null);
+
+                  if (normalizedAssignments.length === 0) {
+                    return [...rosterAssignments, ...depthAssignments];
+                  }
+
+                  const merged = [...normalizedAssignments];
+                  const indexByKey = new Map<string, number>();
+
+                  merged.forEach((assignment, index) => {
+                    indexByKey.set(`${assignment.teamId}:${assignment.driver.id}`, index);
+                  });
+
+                  for (const rosterAssignment of rosterAssignments) {
+                    const key = `${rosterAssignment.teamId}:${rosterAssignment.driver.id}`;
+                    const existingIndex = indexByKey.get(key);
+
+                    if (existingIndex === undefined) {
+                      indexByKey.set(key, merged.length);
+                      merged.push(rosterAssignment);
+                      continue;
+                    }
+
+                    const existing = merged[existingIndex];
+                    const existingRole = existing.role;
+                    if (existingRole === null || existingRole === "RESERVE") {
+                      merged[existingIndex] = {
+                        ...existing,
+                        role:
+                          rosterAssignment.role === "MAIN" || existingRole === null
+                            ? rosterAssignment.role
+                            : existingRole,
+                      };
+                    }
+                  }
+
+                  for (const depthAssignment of depthAssignments) {
+                    const key = `${depthAssignment.teamId}:${depthAssignment.driver.id}`;
+                    const existingIndex = indexByKey.get(key);
+
+                    if (existingIndex === undefined) {
+                      indexByKey.set(key, merged.length);
+                      merged.push(depthAssignment);
+                      continue;
+                    }
+
+                    const existing = merged[existingIndex];
+                    const existingRole = existing.role;
+                    if (existingRole === null || existingRole === "RESERVE") {
+                      merged[existingIndex] = {
+                        ...existing,
+                        role:
+                          depthAssignment.role === "MAIN" || existingRole === null
+                            ? depthAssignment.role
+                            : existingRole,
+                      };
+                    }
+                  }
+
+                  return merged;
+                })();
+
                 const depthChartPriorityByTeamDriver: Record<string, Record<string, number>> = {};
                 for (const entry of depthChartEntries) {
                   if (!depthChartPriorityByTeamDriver[entry.teamId]) {
@@ -1100,11 +1326,12 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                       currentName: string | null;
                       teamPoints: number;
                       depthChartPriority: number | null;
+                      role: "MAIN" | "RESERVE" | null;
                     }>;
                   }
                 >();
                 
-                teamAssignments.forEach((assignment) => {
+                sourceAssignments.forEach((assignment) => {
                   if (!assignment.team || !assignment.teamId) return;
                   const teamId = assignment.teamId;
                   if (!teamRosters.has(teamId)) {
@@ -1121,18 +1348,84 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                       drivers: [],
                     });
                   }
+
+                  const teamRoster = teamRosters.get(teamId);
+                  if (!teamRoster) return;
+
                   const driverKey = (assignment.driver.uuid || assignment.driver.currentName || "")
                     .trim()
                     .toLowerCase();
                   const points = teamDriverPoints[teamId]?.[driverKey] ?? 0;
+                  const priority =
+                    depthChartPriorityByTeamDriver[teamId]?.[assignment.driver.id] ?? null;
+                  const derivedRole: "MAIN" | "RESERVE" | null =
+                    assignment.role ??
+                    (typeof priority === "number"
+                      ? priority <= 3
+                        ? "MAIN"
+                        : "RESERVE"
+                      : null);
 
-                  teamRosters.get(teamId)?.drivers.push({
+                  const resolvedCurrentName =
+                    resolveRosterDisplayName(assignment.driver.currentName) ??
+                    assignment.driver.currentName;
+                  const resolvedNameKey = normalizePlayerNameForCompare(
+                    resolvedCurrentName ?? "",
+                  );
+
+                  const existingDriver = teamRoster.drivers.find(
+                    (driver) => {
+                      if (driver.id === assignment.driver.id) return true;
+                      const existingNameKey = normalizePlayerNameForCompare(
+                        driver.currentName ?? "",
+                      );
+                      return Boolean(resolvedNameKey) && existingNameKey === resolvedNameKey;
+                    },
+                  );
+
+                  if (existingDriver) {
+                    existingDriver.teamPoints = Math.max(existingDriver.teamPoints, points);
+
+                    if (existingDriver.depthChartPriority == null) {
+                      existingDriver.depthChartPriority = priority;
+                    } else if (
+                      typeof priority === "number" &&
+                      priority < existingDriver.depthChartPriority
+                    ) {
+                      existingDriver.depthChartPriority = priority;
+                    }
+
+                    if (existingDriver.role !== "MAIN") {
+                      existingDriver.role =
+                        derivedRole === "MAIN" ? "MAIN" : existingDriver.role ?? derivedRole;
+                    }
+
+                    if (!existingDriver.currentName && assignment.driver.currentName) {
+                      existingDriver.currentName = resolvedCurrentName;
+                    }
+
+                    if (!existingDriver.uuid && assignment.driver.uuid) {
+                      existingDriver.uuid = assignment.driver.uuid;
+                    }
+
+                    if (
+                      existingDriver.uuid?.toLowerCase().startsWith("legacy-") &&
+                      assignment.driver.uuid &&
+                      !assignment.driver.uuid.toLowerCase().startsWith("legacy-")
+                    ) {
+                      existingDriver.uuid = assignment.driver.uuid;
+                    }
+
+                    return;
+                  }
+
+                  teamRoster.drivers.push({
                     id: assignment.driver.id,
                     uuid: assignment.driver.uuid,
-                    currentName: assignment.driver.currentName,
+                    currentName: resolvedCurrentName,
                     teamPoints: points,
-                    depthChartPriority:
-                      depthChartPriorityByTeamDriver[teamId]?.[assignment.driver.id] ?? null,
+                    depthChartPriority: priority,
+                    role: derivedRole,
                   });
                 });
 
@@ -1172,6 +1465,11 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                               const aHasPriority = typeof a.depthChartPriority === "number";
                               const bHasPriority = typeof b.depthChartPriority === "number";
 
+                              if (a.role !== b.role) {
+                                if (a.role === "MAIN") return -1;
+                                if (b.role === "MAIN") return 1;
+                              }
+
                               if (aHasPriority && bHasPriority) {
                                 return (
                                   (a.depthChartPriority as number) -
@@ -1191,7 +1489,10 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                             .map((driver) => (
                             <Link
                               key={driver.id}
-                              href={addLocalePrefix(`/driver/${driver.uuid}`, locale)}
+                              href={addLocalePrefix(
+                                `/driver/${encodeURIComponent(resolveDriverProfileSlug(driver.uuid, driver.currentName))}`,
+                                locale,
+                              )}
                               className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-zinc-800/50 transition-colors group"
                             >
                               <div className="flex items-center gap-3 min-w-0">
@@ -1203,6 +1504,11 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                                 <span className="truncate text-zinc-300 group-hover:text-cyan-400 transition-colors">
                                   {driver.currentName || t(locale, "public.leagueDetail.unknownDriver")}
                                 </span>
+                                {driver.role === "RESERVE" && (
+                                  <Badge size="sm" className="shrink-0">
+                                    RES
+                                  </Badge>
+                                )}
                               </div>
                               <Badge className="shrink-0">{driver.teamPoints} pts</Badge>
                             </Link>

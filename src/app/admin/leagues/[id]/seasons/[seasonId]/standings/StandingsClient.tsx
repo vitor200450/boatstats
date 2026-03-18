@@ -144,6 +144,18 @@ interface StandingsClientProps {
   >;
 }
 
+function resolveAvatarSeed(uuid: string | null | undefined, name: string | null | undefined): string {
+  const uuidValue = uuid?.trim() ?? "";
+  const nameValue = name?.trim() ?? "";
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  if (uuidPattern.test(uuidValue)) return uuidValue;
+  if (nameValue) return nameValue;
+  if (uuidValue) return uuidValue;
+  return "Steve";
+}
+
 function PositionBadge({ position }: { position: number }) {
   if (position === 1)
     return (
@@ -305,7 +317,7 @@ function ProgressionModal({
                       >
                         {contributor.uuid ? (
                           <img
-                            src={`https://mc-heads.net/avatar/${contributor.uuid}/20`}
+                            src={`https://mc-heads.net/avatar/${resolveAvatarSeed(contributor.uuid, contributor.name)}/20`}
                             alt={contributor.name}
                             width={16}
                             height={16}
@@ -367,7 +379,7 @@ function DriverTable({ standings, driverTeamMap, raceLabels, driverRacePositions
                   <div className="flex items-center gap-3">
                     {s.driver ? (
                       <img
-                        src={`https://mc-heads.net/avatar/${s.driver.uuid}/32`}
+                        src={`https://mc-heads.net/avatar/${resolveAvatarSeed(s.driver.uuid, s.driver.currentName)}/32`}
                         alt={s.driver.currentName ?? s.driver.uuid}
                         width={28}
                         height={28}
@@ -477,6 +489,14 @@ function TeamTable({ standings, raceLabels, teamRaceContributors, onOpenDetails 
             const contributorsByRace = s.team
               ? teamRaceContributors[s.team.id] ?? {}
               : {};
+            const raceRowsForModal = raceRows
+              .map((row) => ({
+                ...row,
+                contributors: contributorsByRace[row.raceId] ?? [],
+              }))
+              .filter(
+                (row) => !(row.total === 0 && (row.contributors?.length ?? 0) === 0),
+              );
 
             return (
               <tr key={s.id} className="h-[72px] transition-colors hover:bg-zinc-800/20">
@@ -496,10 +516,10 @@ function TeamTable({ standings, raceLabels, teamRaceContributors, onOpenDetails 
                           <span className="text-zinc-500 italic">Equipe removida</span>
                         )}
                       </span>
-                      {raceRows.length > 0 && (
+                      {raceRowsForModal.length > 0 && (
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-[11px] text-zinc-500 font-mono">
-                            {raceRows.length} corrida(s) com pontuação registrada
+                            {raceRowsForModal.length} corrida(s) com pontuação registrada
                           </span>
                           <button
                             type="button"
@@ -507,10 +527,7 @@ function TeamTable({ standings, raceLabels, teamRaceContributors, onOpenDetails 
                               onOpenDetails(
                                 `Progressão — ${s.team?.name ?? "Equipe"}`,
                                 s.position,
-                                raceRows.map((row) => ({
-                                  ...row,
-                                  contributors: contributorsByRace[row.raceId] ?? [],
-                                })),
+                                raceRowsForModal,
                               )
                             }
                             className="inline-flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300"
@@ -613,7 +630,7 @@ export function StandingsClient({
         <div className="p-5 rounded-2xl bg-zinc-900 border border-yellow-500/20 flex items-center gap-4 relative overflow-hidden">
           {driverLeader?.driver ? (
             <img
-              src={`https://mc-heads.net/avatar/${driverLeader.driver.uuid}/48`}
+              src={`https://mc-heads.net/avatar/${resolveAvatarSeed(driverLeader.driver.uuid, driverLeader.driver.currentName)}/48`}
               alt={driverLeader.driver.currentName ?? driverLeader.driver.uuid}
               width={48}
               height={48}

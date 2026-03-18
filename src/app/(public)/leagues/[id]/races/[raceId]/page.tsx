@@ -26,8 +26,8 @@ function formatTime(ms: number | null): string {
   return `${minutes}:${seconds}.${milliseconds}`;
 }
 
-function isDidNotFinish(position: number, finishTimeMs: number | null): boolean {
-  return position <= 0 || finishTimeMs === null;
+function isDidNotFinish(position: number): boolean {
+  return position <= 0;
 }
 
 function getResultStatus(result: {
@@ -36,7 +36,7 @@ function getResultStatus(result: {
   finishTimeMs: number | null;
 }): "DSQ" | "DNF" | "FINISHED" {
   if (result.disqualified) return "DSQ";
-  if (isDidNotFinish(result.position, result.finishTimeMs)) return "DNF";
+  if (isDidNotFinish(result.position)) return "DNF";
   return "FINISHED";
 }
 

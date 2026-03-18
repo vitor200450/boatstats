@@ -1,7 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
 import { notFound } from "next/navigation";
-import { unstable_cache } from "next/cache";
 import {
   Trophy,
   Flag,
@@ -25,8 +24,7 @@ import { getTracks, getTrackTimeTrial } from "@/services/frosthexAPI";
 
 import { DriverDashboardFilters } from "./DriverDashboardFilters";
 
-// Cache for 5 minutes (FrostHex API consistency)
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ uuid: string }>;
@@ -43,19 +41,34 @@ function normalizeUuidValue(value: string): string {
   return value.replace(/-/g, "").toLowerCase();
 }
 
+function isLegacyUuid(value: string): boolean {
+  return value.toLowerCase().startsWith("legacy-");
+}
+
 async function getDriverRacesData(driverId: string) {
   return prisma.race.findMany({
     where: {
       season: { status: { in: ["ACTIVE", "COMPLETED"] } },
-      eventRounds: {
-        some: {
-          results: {
+      OR: [
+        {
+          eventRounds: {
+            some: {
+              results: {
+                some: {
+                  driverId,
+                },
+              },
+            },
+          },
+        },
+        {
+          resultBonuses: {
             some: {
               driverId,
             },
           },
         },
-      },
+      ],
     },
     select: {
       id: true,
@@ -75,6 +88,14 @@ async function getDriverRacesData(driverId: string) {
               logoUrl: true,
             },
           },
+        },
+      },
+      resultBonuses: {
+        where: {
+          driverId,
+        },
+        select: {
+          points: true,
         },
       },
       eventRounds: {
@@ -111,11 +132,7 @@ async function getDriverRacesData(driverId: string) {
   });
 }
 
-const getDriverRacesDataCached = unstable_cache(
-  async (driverId: string) => getDriverRacesData(driverId),
-  ["driver-races-data"],
-  { revalidate: 300 },
-);
+const getDriverRacesDataCached = getDriverRacesData;
 
 export default async function DriverProfilePage({
   params,
@@ -171,6 +188,68 @@ export default async function DriverProfilePage({
     notFound();
   }
 
+  if (driver.currentName) {
+    const sameNameDrivers = await prisma.driver.findMany({
+      where: {
+        currentName: {
+          equals: driver.currentName,
+          mode: "insensitive",
+        },
+      },
+      select: {
+        id: true,
+        uuid: true,
+      },
+    });
+
+    if (sameNameDrivers.length > 1) {
+      const candidateIds = sameNameDrivers.map((candidate) => candidate.id);
+      const resultCounts = await prisma.roundResult.groupBy({
+        by: ["driverId"],
+        where: {
+          driverId: { in: candidateIds },
+          disqualified: false,
+          eventRound: {
+            race: {
+              season: {
+                status: { in: ["ACTIVE", "COMPLETED"] },
+              },
+            },
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      });
+
+      const countByDriverId = new Map(
+        resultCounts.map((entry) => [entry.driverId, entry._count._all] as const),
+      );
+
+      const preferred = sameNameDrivers
+        .map((candidate) => ({
+          ...candidate,
+          races: countByDriverId.get(candidate.id) ?? 0,
+        }))
+        .sort((a, b) => {
+          const legacyDiff = Number(isLegacyUuid(a.uuid)) - Number(isLegacyUuid(b.uuid));
+          if (legacyDiff !== 0) return legacyDiff;
+          if (b.races !== a.races) return b.races - a.races;
+          return a.id.localeCompare(b.id);
+        })[0];
+
+      if (preferred && preferred.id !== driver.id) {
+        const preferredDriver = await prisma.driver.findUnique({
+          where: { id: preferred.id },
+        });
+
+        if (preferredDriver) {
+          driver = preferredDriver;
+        }
+      }
+    }
+  }
+
   const racesDataRaw = await getDriverRacesDataCached(driver.id);
 
   type DriverRoundResult = {
@@ -188,7 +267,7 @@ export default async function DriverProfilePage({
   const isDidNotFinish = (result: DriverRoundResult | undefined): boolean => {
     if (!result) return false;
     if (result.disqualified) return true;
-    return result.position <= 0 || result.finishTimeMs === null;
+    return result.position <= 0;
   };
 
   const isQualyRound = (round: DriverEventRound): boolean => {
@@ -287,9 +366,14 @@ export default async function DriverProfilePage({
     const mainRaceResult =
       (mainRaceRound?.results[0] as DriverRoundResult | undefined) ?? undefined;
 
+    const bonusPoints = race.resultBonuses.reduce(
+      (sum, bonus) => sum + (bonus.points ?? 0),
+      0,
+    );
+
     const eventPoints = race.eventRounds
       .filter((round) => round.countsForStandings)
-      .reduce((sum, round) => sum + (round.results[0]?.points ?? 0), 0);
+      .reduce((sum, round) => sum + (round.results[0]?.points ?? 0), 0) + bonusPoints;
 
     return {
       leagueId: race.season.league.id,
@@ -1288,11 +1372,15 @@ export default async function DriverProfilePage({
                 return <span className="text-zinc-500 text-xs font-medium">-</span>;
               };
 
-              // Calculate total points
-              const racePoints = race.eventRounds.reduce(
-                (sum, er) => sum + (er.results[0]?.points || 0),
-                0
+              const bonusPoints = race.resultBonuses.reduce(
+                (sum, bonus) => sum + (bonus.points ?? 0),
+                0,
               );
+
+              // Calculate total points
+              const racePoints =
+                race.eventRounds.reduce((sum, er) => sum + (er.results[0]?.points || 0), 0) +
+                bonusPoints;
 
               return (
                 <details
@@ -1601,6 +1689,14 @@ export default async function DriverProfilePage({
                             {t(locale, "public.driverPage.race")}:{" "}
                             <span className="text-cyan-400 font-mono">
                               +{raceResult.points}
+                            </span>
+                          </div>
+                        )}
+                        {bonusPoints > 0 && (
+                          <div className="text-xs text-zinc-500">
+                            Bonus:{" "}
+                            <span className="text-cyan-400 font-mono">
+                              +{bonusPoints}
                             </span>
                           </div>
                         )}

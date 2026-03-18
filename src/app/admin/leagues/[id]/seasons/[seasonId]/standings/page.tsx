@@ -166,6 +166,12 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
         driverId: true,
         position: true,
         points: true,
+        driver: {
+          select: {
+            uuid: true,
+            currentName: true,
+          },
+        },
         eventRound: {
           select: {
             raceId: true,
@@ -194,11 +200,74 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
   const driverStandings = normalizedStandings.filter((s) => s.type === "DRIVER");
   const teamStandings = normalizedStandings.filter((s) => s.type === "TEAM");
 
+  const teamMetaById = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      color: string | null;
+      logoUrl: string | null;
+      logoScale: number;
+      logoPosX: number;
+      logoPosY: number;
+    }
+  >();
+  for (const standing of teamStandings) {
+    if (!standing.team) continue;
+    teamMetaById.set(standing.team.id, {
+      id: standing.team.id,
+      name: standing.team.name,
+      color: standing.team.color,
+      logoUrl: standing.team.logoUrl,
+      logoScale: standing.team.logoScale ?? 100,
+      logoPosX: standing.team.logoPosX ?? 50,
+      logoPosY: standing.team.logoPosY ?? 50,
+    });
+  }
+
   // Build driverId → active team map from season assignments
   const driverTeamMap: Record<string, { id: string; name: string; color: string | null; logoUrl: string | null; logoScale: number; logoPosX: number; logoPosY: number }> = {};
   for (const assignment of teamAssignments) {
     if (!assignment.team) continue;
-    driverTeamMap[assignment.driverId] = assignment.team;
+    const resolvedTeam = {
+      id: assignment.team.id,
+      name: assignment.team.name,
+      color: assignment.team.color,
+      logoUrl: assignment.team.logoUrl,
+      logoScale: assignment.team.logoScale ?? 100,
+      logoPosX: assignment.team.logoPosX ?? 50,
+      logoPosY: assignment.team.logoPosY ?? 50,
+    };
+    driverTeamMap[assignment.driverId] = resolvedTeam;
+    if (!teamMetaById.has(assignment.team.id)) {
+      teamMetaById.set(assignment.team.id, resolvedTeam);
+    }
+  }
+
+  if (Object.keys(driverTeamMap).length === 0) {
+    const raceRoundById = new Map(races.map((race) => [race.id, race.round] as const));
+    const sortedRosterEntries = [...(slotRosterEntries as Array<{
+      seasonId: string;
+      raceId: string;
+      teamId: string;
+      driverId: string;
+      role: "MAIN" | "RESERVE";
+      priority: number;
+    }>)].sort((a, b) => {
+      const roundA = raceRoundById.get(a.raceId) ?? 0;
+      const roundB = raceRoundById.get(b.raceId) ?? 0;
+      if (roundA !== roundB) return roundB - roundA;
+      if (a.role !== b.role) return a.role === "MAIN" ? -1 : 1;
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.driverId.localeCompare(b.driverId);
+    });
+
+    for (const entry of sortedRosterEntries) {
+      if (driverTeamMap[entry.driverId]) continue;
+      const teamMeta = teamMetaById.get(entry.teamId);
+      if (!teamMeta) continue;
+      driverTeamMap[entry.driverId] = teamMeta;
+    }
   }
 
   const raceLabels: Record<string, string> = {};
@@ -250,6 +319,22 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
   const seasonSprintConfig = getSeasonSprintConfig(season.sprintConfig);
 
   const driverMetaById = new Map<string, { name: string; uuid: string | null }>();
+  for (const standing of driverStandings) {
+    if (!standing.driver) continue;
+    driverMetaById.set(standing.driver.id, {
+      name: standing.driver.currentName ?? standing.driver.uuid,
+      uuid: standing.driver.uuid,
+    });
+  }
+
+  for (const row of roundResults) {
+    if (driverMetaById.has(row.driverId)) continue;
+    driverMetaById.set(row.driverId, {
+      name: row.driver?.currentName ?? row.driver?.uuid ?? row.driverId,
+      uuid: row.driver?.uuid ?? null,
+    });
+  }
+
   for (const assignment of allAssignments) {
     if (!driverMetaById.has(assignment.driverId)) {
       driverMetaById.set(assignment.driverId, {
