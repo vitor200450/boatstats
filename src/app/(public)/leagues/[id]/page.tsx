@@ -1189,6 +1189,7 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
 
                     return roster.items.map((item) => ({
                       teamId: roster.teamId,
+                      driverId: item.driver.id,
                       team,
                       role: item.role,
                       driver: {
@@ -1201,10 +1202,26 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                     }));
                   });
 
-                  const normalizedAssignments = teamAssignments.map((assignment) => ({
-                    ...assignment,
-                    role: null as "MAIN" | "RESERVE" | null,
-                  }));
+                  const normalizedAssignments = teamAssignments
+                    .map((assignment) => {
+                      const team = assignment.teamId ? teamInfoById[assignment.teamId] : undefined;
+                      if (!team) return null;
+
+                      return {
+                        teamId: assignment.teamId,
+                        driverId: assignment.driverId,
+                        team,
+                        role: null as "MAIN" | "RESERVE" | null,
+                        driver: {
+                          id: assignment.driver.id,
+                          uuid: assignment.driver.uuid,
+                          currentName:
+                            resolveRosterDisplayName(assignment.driver.currentName) ??
+                            assignment.driver.currentName,
+                        },
+                      };
+                    })
+                    .filter((value): value is NonNullable<typeof value> => value !== null);
 
                   const depthAssignments = depthChartEntries
                     .map((entry) => {
@@ -1212,6 +1229,7 @@ export default async function LeagueStandingsPage({ params, searchParams }: Page
                       if (!team) return null;
                       return {
                         teamId: entry.teamId,
+                        driverId: entry.driver.id,
                         team,
                         role: (entry.priority <= 3 ? "MAIN" : "RESERVE") as
                           | "MAIN"
